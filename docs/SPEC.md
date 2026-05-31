@@ -85,14 +85,17 @@
 - README 含：项目简介、本地运行步骤、`.env` 模板、技术栈、在线 demo 链接
 - 说明文档（可放 `docs/REPORT.md`）：实现思路、关键取舍、完成度、未来扩展优先级
 
-### 1.7 多语言（i18n 中英）
-- 全局语言切换：中文 / 英文
-- **切换方式：Cookie 持久化**（不走 URL 前缀 `/zh` / `/en`；保持路由结构简单）
-- **范围（v1）：仅 UI 字典**（导航、按钮、表单标签、状态文案等）
-- Agent 系统提示与角色描述 v1 **暂保留中文**，不双语化
-- 用户 locale 持久化到数据库（`User.locale`），未登录用走 Cookie
+### 1.7 多语言（i18n 中英）— **延后到所有基础 + 扩展功能完成之后**
+> 用户决定：v1 默认/仅中文上线；待 §1 全部完成 + §2 扩展功能全部完成后再做英文字典 + 语言切换器。  
+> 期间所有界面文案直接写中文字面量，不引入 `next-intl` 的 `t()` 调用，避免提前抽象。  
+> `messages/zh.json` 和 `messages/en.json` 留作占位，后续一次性扫整个仓库提字典。
+
+接入时的目标（保持不变）：
+- 全局语言切换：中文 / 英文，Cookie 持久化（不走 URL 前缀，保持路由简单）
+- 范围（v1）：仅 UI 字典；Agent 系统提示保留中文
+- 用户 locale 持久化到数据库（`User.locale`），未登录走 Cookie
 - 实现：`next-intl` + `messages/zh.json` + `messages/en.json`
-- **后续升级路径**：① Agent 系统提示双语化  ② URL 前缀路由（更利于 SEO）
+- 后续升级路径：① Agent 提示双语化  ② URL 前缀路由（利于 SEO）
 
 ---
 
@@ -243,10 +246,11 @@
 
 | 协议路径 | SDK | 默认便宜模型 | 同协议下其它常用模型 |
 |---|---|---|---|
-| `/v1/chat/completions` | `openai` | `gpt-4o-mini` | DeepSeek（`deepseek-chat`）、Grok（`grok-2-mini`）、GPT 其它型号 |
-| `/v1/messages` | `@anthropic-ai/sdk` | `claude-haiku-4-5` | Claude 其它型号 |
+| `/v1/chat/completions` | `openai` | `claude-haiku-4-5` | （代理实测可用）Claude 各档；GPT/DeepSeek/Grok/Gemini 在后台 model 列表中但无可用 distributor channel |
+| `/v1/messages` | `@anthropic-ai/sdk` | `claude-sonnet-4-6` | Claude 各档（haiku / sonnet / opus，各 thinking 变体） |
 
-> DeepSeek 和 Grok 的官方 API 都兼容 OpenAI 格式，因此走同一条 SDK 路径；只需更换 `model` 参数即可。具体 model ID 字符串在开发期到代理后台核对。
+> **代理实测（2026-05-31）**：当前 NewAPI 实例上**只有 Claude 家族真正能调通**。`gpt-5.4` / `gemini-3-flash` 等虽然在 `/v1/models` 列表里，但请求时返回 `model_not_found` / `no available channel`。代理后台开新通道之后这张表可以扩。
+> DeepSeek 和 Grok 的官方 API 都兼容 OpenAI 格式，因此本来设计上走同一条 SDK 路径，只需换 `model` 参数；具体 model ID 字符串始终以代理 `/v1/models` + 实际探测为准。
 
 ### 4.7 Agent 编排
 

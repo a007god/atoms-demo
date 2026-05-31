@@ -9,5 +9,7 @@ const { auth } = NextAuth(authConfigEdge);
 export default auth;
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\..*).*)"],
+  // Exclude /api/* entirely — those routes do their own auth checks and need
+  // honest 401/JSON responses, not HTML redirects to /login.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|.*\\..*).*)"],
 };

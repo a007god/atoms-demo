@@ -4,6 +4,164 @@ All notable changes per development session. Maintained alongside the code; one 
 
 ---
 
+## Session 3 — 2026-05-31 — App shell + Chat/SSE + Multi-agent + UI polish
+
+Covers SPEC §1.2 + §1.3 + §1.4 in one stretch, plus a layout refactor and the modal/markdown pattern decisions.
+
+### S2-4 — Project CRUD (SPEC §1.2)
+
+#### Server actions — `src/app/(app)/projects/actions.ts`
+
+- `createProject` — Zod name validation → insert → layout-level revalidate → redirect to detail.
+- `renameProject(id, formData)` — uses `updateMany({ where: { id, ownerId } })` because `(id, ownerId)` isn't a declared compound unique. The `count === 0` guard rejects cross-tenant edits without a separate fetch.
+- `deleteProject(id)` — symmetric `deleteMany` + `count === 0` guard. NO server-side redirect (client decides — see below).
+- `startNewProject(formData)` — entry from the welcome screen. Validates the first message, derives a project name from its first 30 chars, persists `defaultMode` from the welcome's mode toggle, then redirects to `/projects/[id]?prompt=<encoded>` so the chat panel auto-sends the first turn.
+- All actions call a `requireUserId()` helper that redirects to `/login` on missing session (defense-in-depth; proxy should already catch).
+
+#### Detail page — `src/app/(app)/projects/[id]/page.tsx`
+
+- Ownership-scoped `findFirst` (so cross-tenant URL probing → `notFound()`).
+- Loads existing messages from the (lazy) conversation + reads `defaultMode` for the chat panel's initial mode.
+
+### App shell — `(app)` route group
+
+- New route group `src/app/(app)/` wraps every logged-in page.
+- `layout.tsx` provides the sidebar shell (left rail + main pane). Fetches `session` + `projects` once for the rail.
+- Sidebar layout:
+  - Clickable app logo → `/` (welcome).
+  - "+ 新对话" button → `/`.
+  - Scrollable project list with active-state highlight via `usePathname`.
+  - Bottom: user identity + logout form.
+- `/` page rewritten as a centered WelcomeChat (replaces the old project-list-on-home).
+
+### Sidebar UX — `_components/project-list.tsx`
+
+- Each row hover-reveals a **kebab (⋮) menu** (rebuilt from scratch — hand-rolled outside-click + Esc close).
+- Menu items: **重命名**, **删除**.
+- Both confirms use the HTML5 `<dialog>` modal pattern (see "Modal pattern" below), not native `window.confirm` / `alert`.
+- Rename dialog: input pre-filled with current name, key-based remount resets dirty edits between opens.
+- Delete dialog: destructive-styled confirm with copy explaining the cascade.
+- Rename + delete actions both client-action-wrap the server action so the dialog can `setOpen(false)` on success.
+
+### Modal pattern (memory: `feedback-modal-pattern`)
+
+- Decision: use HTML5 `<dialog>` + `.showModal()` for all confirms/dialogs going forward; **never** `window.confirm` / `alert`.
+- Centering: `fixed left-1/2 top-1/2 right-auto bottom-auto -translate-x-1/2 -translate-y-1/2` — Tailwind preflight + the UA `dialog[open] { inset: 0; margin: auto }` interact badly; the translate trick is bulletproof regardless of intrinsic size.
+- Backdrop: `backdrop:bg-black/40` via Tailwind's `::backdrop` variant.
+- React state ↔ native dialog synced via `useEffect` + `onClose`.
+- Reusable `Modal` helper extracted inside `project-list.tsx` for now; will extract to its own file once a second feature reuses it.
+
+### S2-5 — Single-agent chat + SSE streaming (SPEC §1.3)
+
+#### LLM provider abstraction — `src/lib/llm/`
+
+- `types.ts` — `LLMMessage` (role/content) + `LLMProvider` interface (`stream(messages, opts?) → AsyncIterable<string>`).
+- `mock.ts` — character-level fake streaming with configurable delay; respects `AbortSignal`.
+- `openai.ts` — wraps the `openai` SDK with custom `baseURL` for the NewAPI proxy. Yields content deltas.
+- `anthropic.ts` — wraps `@anthropic-ai/sdk`; separates the `system` message into the dedicated field and filters it out of the conversation.
+- `index.ts` — `getProvider()` selects by `DEFAULT_PROVIDER` env, with model picked from `DEFAULT_OPENAI_MODEL` / `DEFAULT_ANTHROPIC_MODEL` (or per-call override).
+
+#### `/api/chat` route — `src/app/api/chat/route.ts`
+
+- Auth + Zod body parse + ownership check.
+- Lazy-creates one `Conversation` per project (v1 = single-conversation projects).
+- Pulls the last 50 history rows for context, persists the new user `Message`, then streams.
+- SSE event protocol (consumed by `chat-panel.tsx`):
+  - `user-saved { tempId, messageId }` — echoes client's optimistic id, lets the client swap to the persisted id.
+  - `start { tempId, agent }` — new assistant bubble begins (with agent attribution, null in single-agent mode).
+  - `delta { tempId, text }` — text chunk.
+  - `saved { tempId, messageId }` — assistant message persisted, swap temp id.
+  - `done` — pipeline finished.
+  - `error { message }` — stream failure.
+- `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no` for proxy-friendliness.
+
+#### Chat panel — `src/app/(app)/projects/[id]/_components/chat-panel.tsx`
+
+- Client component. Maintains `messages[]`, `input`, `mode`, `streaming`, `error`.
+- Optimistic user-message append; `fetch` POST with `ReadableStream` reader + SSE event splitter (`\n\n` delimited `data:` lines).
+- Auto-scroll to bottom on `messages` change.
+- Aborts in-flight request on unmount + on user "停止" click.
+- Reads `?prompt=` query param on mount → auto-sends the welcome screen's first message, then `history.replaceState` so reload doesn't re-fire.
+- Textarea-based input (rows=3, auto-grow up to 240px), Enter sends / Shift+Enter newline.
+
+### S2-6 — Multi-agent role-play (SPEC §1.4)
+
+#### Agent definitions — `src/lib/agents/definitions.ts`
+
+- 7 agents borrowed from Atoms: Mike (Team Leader), Emma (PM), Bob (Architect), Alex (Engineer), David (Data), Iris (Researcher), Sarah (SEO).
+- Each carries: name, role, description, Tailwind accent classes for the visual badge, and a Chinese system prompt (per the deferred-i18n decision).
+
+#### Pipelines — `src/lib/agents/pipelines.ts`
+
+- `chat` mode = `[null]` (single anonymous call — reuses the same orchestration loop).
+- `team` mode = `["mike", "emma", "alex"]` for v1.
+- Bob / David / Iris / Sarah defined but not on any pipeline yet.
+
+#### Orchestration — `/api/chat` extended
+
+- For each step in the pipeline:
+  - Build outgoing messages = `[system?, ...normalizedHistory, composedUser]`.
+  - `normalizedHistory`: collapses consecutive assistant rows (one per agent in team mode) into a single `assistant` so the sequence strictly alternates user/assistant (Anthropic refuses anything else).
+  - `composedUser`: original user message + prior agents' outputs in THIS turn folded in as one user-block (`【Mike (Team Leader) 的输出】\n…`). This guarantees messages always end with `user` — fixes the **Emma → 400 Invalid request** bug seen against Claude.
+  - Stream chunks via `provider.stream`, persist as `Message { role: assistant, agent: agentId }`, emit `start`/`delta`/`saved` events.
+
+#### Mode toggle UX
+
+- Per-project `mode` state in the chat panel; `initialMode` comes from `Project.defaultMode`.
+- Welcome screen also has a mode toggle, persisted via the hidden form input → `startNewProject` writes `Project.defaultMode`.
+- Old segmented-pill toggle replaced by an `ActionsMenu` "+" button (see below).
+
+### Welcome standby + ActionsMenu
+
+- `(app)/page.tsx` = WelcomeChat: centered heading + multiline textarea with auto-resize.
+- New `ActionsMenu` (`_components/actions-menu.tsx`) — "+" button with upward popover, used on BOTH welcome and chat-panel input bars:
+  - **团队接力模式** — checkable, drives the `mode` state.
+  - **添加附件** — disabled with "即将上线" badge, placeholder for future.
+- Hand-rolled outside-click + Esc handling (consistent with the kebab menu; no Radix).
+
+### Markdown rendering — `markdown-message.tsx`
+
+- Installed `react-markdown` + `remark-gfm`.
+- Custom element renderers for `p`/`h1-3`/`ul`/`ol`/`li`/`blockquote`/`a`/`hr`/`strong`/`em`/`pre`/`code`/`table`.
+- Inline vs block code discriminated by `language-*` className OR presence of `\n` (react-markdown v9 removed the `inline` prop).
+- Assistant bubbles render via `<MarkdownMessage>`; user bubbles stay plain `whitespace-pre-wrap` (typing markdown in your own message looks weird).
+- No syntax highlighting (shiki/prism too heavy for v1).
+
+### Plumbing & fixes
+
+- `proxy.ts`: matcher updated to exclude all of `/api/*` (was only excluding `/api/auth/*`). Fetch hits on `/api/chat` were getting 307-redirected to `/login` HTML, breaking SSE parsing.
+- `Project.defaultMode` persisted from welcome's mode toggle (default `"chat"`), re-read on detail page mount.
+- Layout-level `revalidatePath("/", "layout")` on all project mutations so the sidebar's project list re-renders without a hard reload.
+
+### Real model wiring + validation
+
+- Pinged every candidate against the NewAPI proxy at `https://mynewapi.n1neman.fun`:
+  - ❌ `deepseek-v4-flash`, `grok-4.1-fast` — not in proxy's `/v1/models` at all.
+  - ❌ `gpt-5.4`, `gpt-5.4-mini`, `gemini-3-flash` — listed in `/v1/models` but distributor has no working channel (503 / 500 / timeout).
+  - ✅ Claude family — `claude-haiku-4-5`, `claude-sonnet-4-6`, etc. — works over both the openai-compat and the native anthropic endpoints.
+- `.env.local` final picks:
+  - `DEFAULT_PROVIDER="anthropic"` (was `mock`).
+  - `DEFAULT_ANTHROPIC_MODEL="claude-sonnet-4-6"` — best persona/role adherence among working models; the demo's "wow" is distinct Mike/Emma/Alex voices.
+  - `DEFAULT_OPENAI_MODEL="claude-haiku-4-5"` — cheap fallback if we switch to the openai-protocol path.
+
+### Spec updates
+
+- `docs/SPEC.md` §1.7: explicitly marked i18n as **deferred** to post-§1+§2.
+- §4.1: Next.js version pinned to 16, TypeScript to 6 (matches actual installs).
+- §4.4: Prisma row notes the new `prisma-client` generator.
+
+### Verification
+
+- `pnpm exec tsc --noEmit` — 0 errors after every commit-worthy step.
+- Browser e2e by user: welcome → "+" → tick 团队接力 → send first message → auto-creates project named from message → redirect → Mike → Emma → Alex stream in distinct voices with markdown-rendered code blocks and blockquotes. Rename via kebab dialog, delete via kebab dialog both verified.
+- Proxy probe: documented working model is `claude-sonnet-4-6` via native anthropic protocol.
+
+### Deferred (decision recap)
+
+- **next-intl wiring (SPEC §1.7)** — deferred to after §1 base + §2 extensions all ship. v1 ships zh-only. SPEC §1.7 updated to reflect this. UI text stays as Chinese literals (no `t()` calls) until the dedicated i18n sweep.
+
+---
+
 ## Session 2 — 2026-05-31 — Data layer + Auth (SPEC §1.5, §1.1)
 
 ### S2-2 — Auth.js v5 Credentials + signup/login closed loop
