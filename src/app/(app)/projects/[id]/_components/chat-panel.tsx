@@ -36,6 +36,9 @@ export function ChatPanel({
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [pendingReply, setPendingReply] = useState(
+    initialMessages.length > 0 && initialMessages[initialMessages.length - 1].role === "user"
+  );
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -106,6 +109,25 @@ export function ChatPanel({
     if (!onHtmlDetected) return;
     onHtmlDetected(extractLatestHtml(messages));
   }, [messages, onHtmlDetected]);
+
+  // Poll for new messages when we know a reply is pending (navigated back mid-generation)
+  useEffect(() => {
+    if (!pendingReply || streaming) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/messages`);
+        if (!res.ok) return;
+        const data: ChatMessage[] = await res.json();
+        if (data.length > messages.length) {
+          setMessages(data);
+          if (data[data.length - 1].role === "assistant") {
+            setPendingReply(false);
+          }
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [pendingReply, streaming, projectId, messages.length]);
 
   // Mention helpers
   function handleInputChange(value: string) {
@@ -260,6 +282,7 @@ export function ChatPanel({
         const agent =
           typeof event.agent === "string" ? (event.agent as AgentId) : null;
         const tempId = event.tempId;
+        setPendingReply(false);
         setMessages((prev) => [
           ...prev,
           { id: tempId, role: "assistant", agent, content: "" },
@@ -326,19 +349,8 @@ export function ChatPanel({
                 onShowPreview={onPreviewToggle}
               />
             ))}
-            {streaming && messages.length > 0 && messages[messages.length - 1].role === "user" && (
-              <div className="flex justify-start">
-                <div className="max-w-[85%]">
-                  <div className="mb-1 text-[11px] text-muted-foreground">生成中</div>
-                  <div className="rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="animate-pulse">●</span>
-                      <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
-                      <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
+            {(streaming || pendingReply) && messages.length > 0 && messages[messages.length - 1].role === "user" && (
+              <GeneratingIndicator />
             )}
             {error && (
               <div className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -493,6 +505,23 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function GeneratingIndicator() {
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[85%]">
+        <div className="mb-1 text-[11px] text-muted-foreground">生成中</div>
+        <div className="rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <span className="animate-pulse">●</span>
+            <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+            <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+          </span>
+        </div>
       </div>
     </div>
   );

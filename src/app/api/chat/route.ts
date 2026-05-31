@@ -399,7 +399,7 @@ async function planImages(
 ): Promise<string[]> {
   const context = turnOutputs.map(o => `${AGENTS[o.id].name}: ${o.content.slice(0, 200)}`).join("\n");
   const planMessages: LLMMessage[] = [
-    { role: "system", content: `你是一个图片规划助手。根据用户需求和团队讨论，列出这个页面需要的图片（最多5张）。
+    { role: "system", content: `你是一个图片规划助手。根据用户需求和团队讨论，列出这个页面需要的图片（最多15张）。
 每行一个英文描述，用于 AI 生图。描述要具体（风格、颜色、构图、主体）。
 只输出描述列表，每行一个，不要编号、不要其他文字。如果不需要图片就输出空。` },
     { role: "user", content: `需求：${message}\n\n团队讨论：\n${context}` },
@@ -411,7 +411,7 @@ async function planImages(
     if (result.length > 1000) break;
   }
 
-  return result.trim().split("\n").filter(line => line.trim().length > 10).slice(0, 5);
+  return result.trim().split("\n").filter(line => line.trim().length > 10).slice(0, 15);
 }
 
 async function generateBatchImages(prompts: string[]): Promise<{ desc: string; url: string | null }[]> {
