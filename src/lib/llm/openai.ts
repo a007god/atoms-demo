@@ -23,7 +23,16 @@ export class OpenAIProvider implements LLMProvider {
     const stream = await this.client.chat.completions.create(
       {
         model: this.model,
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string"
+            ? m.content
+            : m.content.map((b) =>
+                b.type === "text"
+                  ? { type: "text" as const, text: b.text }
+                  : { type: "image_url" as const, image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+              ),
+        })),
         stream: true,
       },
       { signal: opts?.signal },

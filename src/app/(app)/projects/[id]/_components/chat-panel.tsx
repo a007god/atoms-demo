@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AGENTS, AGENT_LIST, type AgentId, type ChatMode } from "@/lib/agents";
 import { ActionsMenu } from "../../../_components/actions-menu";
 import { MarkdownMessage } from "./markdown-message";
 import { MentionPopover, getFilteredAgents } from "./mention-popover";
 import { ActionCard, parseActionContent } from "./action-card";
+import { FileAttachmentBar, type FileAttachment, readDroppedFiles } from "./file-attachment";
 
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   agent: string | null;
   content: string;
+  /** Image previews for display (session-only, not persisted) */
+  imagePreviews?: { name: string; url: string }[];
 };
 
 type Props = {
@@ -47,6 +50,33 @@ export function ChatPanel({
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionIndex, setMentionIndex] = useState(0);
   const inputWrapperRef = useRef<HTMLDivElement>(null);
+
+  // File attachment state
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
+  const [dragging, setDragging] = useState(false);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    if (streaming) return;
+    const files = Array.from(e.dataTransfer.files);
+    const newAttachments = await readDroppedFiles(files);
+    setAttachments((prev) => [...prev, ...newAttachments].slice(0, 5));
+  }, [streaming]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDragging(false);
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
 
   const userAtBottomRef = useRef(true);
 
@@ -85,6 +115,7 @@ export function ChatPanel({
   }, []);
 
   // Pick up ?prompt=... left by the welcome screen and auto-send it.
+  // Also restore any pending attachments from sessionStorage.
   const autoSentRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -98,7 +129,17 @@ export function ChatPanel({
     url.searchParams.delete("prompt");
     window.history.replaceState({}, "", url.toString());
 
-    void send(prompt);
+    // Restore attachments stashed by the welcome page
+    let pendingAttachments: FileAttachment[] | undefined;
+    const stored = sessionStorage.getItem("__atoms_pending_attachments");
+    if (stored) {
+      sessionStorage.removeItem("__atoms_pending_attachments");
+      try {
+        pendingAttachments = JSON.parse(stored) as FileAttachment[];
+      } catch { /* ignore */ }
+    }
+
+    void send(prompt, pendingAttachments);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -175,18 +216,41 @@ export function ChatPanel({
     return false;
   }
 
-  async function send(textOverride?: string) {
+  async function send(textOverride?: string, attachmentsOverride?: FileAttachment[]) {
     const text = (textOverride ?? input).trim();
-    if (!text || streaming) return;
+    const currentAttachments = attachmentsOverride ?? attachments;
+    if ((!text && currentAttachments.length === 0) || streaming) return;
+    const finalText = text || "请查看附件内容";
 
-    const mentioned = parseMentions(text);
+    const mentioned = parseMentions(finalText);
+
+    // Build display content with file markers (matches backend storedContent format)
+    const textFiles = currentAttachments.filter((a) => a.type === "text");
+    const imageFiles = currentAttachments.filter((a) => a.type === "image");
+    const fileSections = [
+      ...textFiles.map((a) => `---\n[文件: ${a.name}]\n\`\`\`\n${a.content}\n\`\`\``),
+      ...imageFiles.map((a) => `[图片: ${a.name}]`),
+    ];
+    const displayContent = fileSections.length > 0
+      ? finalText + "\n\n" + fileSections.join("\n\n")
+      : finalText;
 
     const userTempId = `temp-user-${Date.now()}`;
+    const imgPreviews = currentAttachments
+      .filter((a) => a.type === "image" && a.preview)
+      .map((a) => ({ name: a.name, url: a.preview! }));
     setMessages((prev) => [
       ...prev,
-      { id: userTempId, role: "user", agent: null, content: text },
+      {
+        id: userTempId,
+        role: "user",
+        agent: null,
+        content: displayContent,
+        ...(imgPreviews.length > 0 ? { imagePreviews: imgPreviews } : {}),
+      },
     ]);
     setInput("");
+    setAttachments([]);
     setMentionOpen(false);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setStreaming(true);
@@ -201,9 +265,10 @@ export function ChatPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
-          message: text,
+          message: finalText,
           mode,
           ...(mentioned.length > 0 ? { agents: mentioned } : {}),
+          ...(currentAttachments.length > 0 ? { attachments: currentAttachments.map((a) => ({ name: a.name, type: a.type, content: a.content })) } : {}),
           userTempId,
         }),
         signal: controller.signal,
@@ -314,7 +379,19 @@ export function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="flex h-full flex-col relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm pointer-events-none">
+          <div className="rounded-xl border-2 border-dashed border-primary px-8 py-6">
+            <span className="text-sm font-medium text-primary">松开以添加文件</span>
+          </div>
+        </div>
+      )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 ? (
           <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
@@ -348,7 +425,10 @@ export function ChatPanel({
           }}
           className="mx-auto max-w-2xl px-6 py-4"
         >
-          <div ref={inputWrapperRef} className="relative rounded-2xl border border-input bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring">
+          <div
+            ref={inputWrapperRef}
+            className="relative rounded-2xl border border-input bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring"
+          >
             <MentionPopover
               query={mentionQuery}
               visible={mentionOpen}
@@ -357,6 +437,9 @@ export function ChatPanel({
               onSelect={handleMentionSelect}
               onClose={() => setMentionOpen(false)}
             />
+            {attachments.length > 0 && (
+              <FileAttachmentBar attachments={attachments} onRemove={removeAttachment} />
+            )}
             <textarea
               ref={textareaRef}
               value={input}
@@ -370,7 +453,7 @@ export function ChatPanel({
               rows={3}
               maxLength={8000}
               placeholder={
-                streaming ? "回复中…" : "输入消息，@ 可指定 Agent · Enter 发送 · Shift+Enter 换行"
+                streaming ? "回复中…" : "输入消息，@ 可指定 Agent · 拖拽文件到此处 · Enter 发送"
               }
               onKeyDown={(e) => {
                 if (e.nativeEvent.isComposing) return;
@@ -383,11 +466,32 @@ export function ChatPanel({
               className="block w-full resize-none bg-transparent p-3 text-sm leading-relaxed outline-none placeholder:text-muted-foreground disabled:opacity-60"
             />
             <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
-              <ActionsMenu
-                mode={mode}
-                onModeChange={setMode}
-                disabled={streaming}
-              />
+              <div className="flex items-center gap-1">
+                <ActionsMenu
+                  mode={mode}
+                  onModeChange={setMode}
+                  disabled={streaming}
+                />
+                <label className="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                  <input
+                    type="file"
+                    multiple
+                    className="hidden"
+                    disabled={streaming}
+                    accept=".txt,.md,.csv,.json,.xml,.html,.js,.ts,.jsx,.tsx,.css,.py,.yaml,.yml,.toml,.sql,.svg,.png,.jpg,.jpeg,.gif,.webp"
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length === 0) return;
+                      const newAttachments = await readDroppedFiles(files);
+                      setAttachments((prev) => [...prev, ...newAttachments].slice(0, 5));
+                      e.target.value = "";
+                    }}
+                  />
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </label>
+              </div>
               {streaming ? (
                 <button
                   type="button"
@@ -399,7 +503,7 @@ export function ChatPanel({
               ) : (
                 <button
                   type="submit"
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && attachments.length === 0}
                   className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                   发送
@@ -433,6 +537,11 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
     ? parseActionContent(message.content)
     : null;
 
+  // For user messages, parse out file/image attachments from content
+  const { cleanText, fileCards, imageNames } = isUser
+    ? parseUserAttachments(message.content)
+    : { cleanText: message.content, fileCards: [], imageNames: [] };
+
   // Check if this message has a complete HTML block
   const htmlContent = !isUser && !isStreaming && message.content && !action
     ? extractHtmlFromMessage(message.content)
@@ -459,6 +568,25 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
           )}
           <span>{label}</span>
         </div>
+        {/* Attachment cards above the bubble */}
+        {isUser && ((message.imagePreviews && message.imagePreviews.length > 0) || imageNames.length > 0 || fileCards.length > 0) ? (
+          <div className="mb-1.5 flex flex-wrap gap-1.5 justify-end">
+            {message.imagePreviews?.map((img, i) => (
+              <div key={`img-${i}`} className="rounded-md border border-border overflow-hidden">
+                <img src={img.url} alt={img.name} className="h-16 w-16 object-cover" />
+              </div>
+            ))}
+            {!message.imagePreviews && imageNames.map((name, i) => (
+              <div key={`imgref-${i}`} className="flex items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2 py-1 text-[11px] text-muted-foreground">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+                <span className="max-w-[100px] truncate">{name}</span>
+              </div>
+            ))}
+            {fileCards.map((file, i) => (
+              <FileCardChip key={`file-${i}`} name={file.name} content={file.content} />
+            ))}
+          </div>
+        ) : null}
         {action ? (
           <ActionCard action={action} />
         ) : (
@@ -470,12 +598,10 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
                 : "bg-muted text-foreground",
             ].join(" ")}
           >
-            {message.content ? (
-              isUser ? (
-                message.content
-              ) : (
-                <MarkdownMessage content={message.content} streaming={isStreaming} />
-              )
+            {isUser ? (
+              cleanText || <span className="opacity-70">（附件）</span>
+            ) : message.content ? (
+              <MarkdownMessage content={message.content} streaming={isStreaming} />
             ) : message.role === "assistant" ? (
               <span className="opacity-50">…</span>
             ) : null}
@@ -497,9 +623,63 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
   );
 }
 
+function FileCardChip({ name, content }: { name: string; content: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = content.split("\n").length;
+  return (
+    <div className="w-full rounded-md border border-border bg-muted/50 text-[11px]">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-1.5 px-2 py-1 text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>
+        <span className="truncate">{name}</span>
+        <span className="ml-auto opacity-60">{lines} 行 · {open ? "收起" : "展开"}</span>
+      </button>
+      {open && (
+        <pre className="max-h-40 overflow-auto border-t border-border px-2 py-1 font-mono text-[10px] text-muted-foreground leading-relaxed">
+          {content.length > 2000 ? content.slice(0, 2000) + "\n..." : content}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function autoResize(ta: HTMLTextAreaElement) {
   ta.style.height = "auto";
   ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`;
+}
+
+/**
+ * Parse file/image attachment markers from a user message.
+ * Returns the clean text (without attachment sections) and extracted file/image info.
+ */
+function parseUserAttachments(content: string): {
+  cleanText: string;
+  fileCards: { name: string; content: string }[];
+  imageNames: string[];
+} {
+  const fileCards: { name: string; content: string }[] = [];
+  const imageNames: string[] = [];
+
+  // Extract [图片: name] markers
+  let cleaned = content.replace(/\[图片:\s*(.+?)\]/g, (_, name) => {
+    imageNames.push(name.trim());
+    return "";
+  });
+
+  // Extract ---\n[文件: name]\n```\ncontent\n``` blocks
+  const fileRe = /---\n\[文件:\s*(.+?)\]\n```\n([\s\S]*?)\n```/g;
+  cleaned = cleaned.replace(fileRe, (_, name, fileContent) => {
+    fileCards.push({ name: name.trim(), content: fileContent });
+    return "";
+  });
+
+  // Clean up leftover whitespace
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+
+  return { cleanText: cleaned, fileCards, imageNames };
 }
 
 async function safeText(res: Response): Promise<string> {

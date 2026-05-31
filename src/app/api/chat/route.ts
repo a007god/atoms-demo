@@ -2,6 +2,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getProvider, type LLMMessage } from "@/lib/llm";
+import type { ContentBlock } from "@/lib/llm/types";
 import { AGENTS, PIPELINES, DEFAULT_TEAM_FALLBACK, type AgentId } from "@/lib/agents";
 
 const MAX_DEPTH = 8;
@@ -10,12 +11,19 @@ const agentIdEnum = z.enum([
   "mike", "emma", "bob", "alex", "david", "iris", "sarah",
 ]);
 
+const attachmentSchema = z.object({
+  name: z.string(),
+  type: z.enum(["text", "image"]),
+  content: z.string(),
+});
+
 const bodySchema = z.object({
   projectId: z.string().min(1),
   message: z.string().trim().min(1).max(8000),
   mode: z.enum(["chat", "team"]).default("chat"),
   agents: z.array(agentIdEnum).min(1).optional(),
   userTempId: z.string().optional(),
+  attachments: z.array(attachmentSchema).max(5).optional(),
 });
 
 type Event =
@@ -47,7 +55,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return new Response(parsed.error.message, { status: 400 });
   }
-  const { projectId, message, mode, agents: mentionedAgents, userTempId } = parsed.data;
+  const { projectId, message, mode, agents: mentionedAgents, userTempId, attachments } = parsed.data;
 
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
@@ -75,8 +83,20 @@ export async function POST(req: Request): Promise<Response> {
     select: { role: true, agent: true, content: true },
   });
 
+  // Build stored content: message text + file references (persisted to DB)
+  const textAttachments = attachments?.filter((a) => a.type === "text") ?? [];
+  const imageAttachments = attachments?.filter((a) => a.type === "image") ?? [];
+
+  const fileSections = [
+    ...textAttachments.map((a) => `---\n[文件: ${a.name}]\n\`\`\`\n${a.content}\n\`\`\``),
+    ...imageAttachments.map((a) => `[图片: ${a.name}]`),
+  ];
+  const storedContent = fileSections.length > 0
+    ? message + "\n\n" + fileSections.join("\n\n")
+    : message;
+
   const userRow = await prisma.message.create({
-    data: { conversationId, role: "user", content: message },
+    data: { conversationId, role: "user", content: storedContent },
     select: { id: true },
   });
 
@@ -117,13 +137,28 @@ export async function POST(req: Request): Promise<Response> {
           const agentId = worklist[i];
           const agent = agentId ? AGENTS[agentId] : null;
 
-          const composedUser = composeUserMessage(message, turnOutputs);
+          const composedText = composeUserMessage(storedContent, turnOutputs);
+          // Include image attachments in the user message for the first agent only
+          const userContent: string | ContentBlock[] =
+            imageAttachments.length > 0 && depth === 0
+              ? [
+                  { type: "text" as const, text: composedText },
+                  ...imageAttachments.map((a) => ({
+                    type: "image" as const,
+                    source: {
+                      type: "base64" as const,
+                      media_type: a.content.split(";")[0].split(":")[1] || "image/png",
+                      data: a.content.split(",")[1] || a.content,
+                    },
+                  })),
+                ]
+              : composedText;
           const llmMessages: LLMMessage[] = [
             ...(agent
               ? [{ role: "system", content: agent.systemPrompt } as LLMMessage]
               : []),
             ...historyLLM,
-            { role: "user", content: composedUser },
+            { role: "user", content: userContent },
           ];
 
           const tempId = `temp-${agentId ?? "assistant"}-${depth}-${Date.now()}`;

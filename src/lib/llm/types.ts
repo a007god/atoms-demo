@@ -1,8 +1,15 @@
 export type LLMRole = "system" | "user" | "assistant";
 
+export type TextBlock = { type: "text"; text: string };
+export type ImageBlock = {
+  type: "image";
+  source: { type: "base64"; media_type: string; data: string };
+};
+export type ContentBlock = TextBlock | ImageBlock;
+
 export type LLMMessage = {
   role: LLMRole;
-  content: string;
+  content: string | ContentBlock[];
 };
 
 export type LLMStreamOptions = {

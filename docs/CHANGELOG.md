@@ -4,7 +4,19 @@ All notable changes per development session. Maintained alongside the code; one 
 
 ---
 
-## Session 5 — 2026-06-01 — Action cards for image generation
+## Session 5 — 2026-06-01 — File drag-and-drop + action cards
+
+### File drag-and-drop upload (SPEC §2 extension)
+
+- **Drop zone**: input wrapper accepts dragged files with visual overlay ("松开以添加文件")
+- **File picker**: paperclip button next to mode switcher for click-to-upload
+- **Supported formats**: text files (.txt/.md/.csv/.json/.xml/.html/.js/.ts/.py/etc) + images (.png/.jpg/.gif/.webp)
+- **Limits**: text 100KB, images 5MB, max 5 attachments per message
+- **Text files**: content appended to message text (persisted in DB as part of user message)
+- **Images**: sent as Anthropic content blocks (base64) — LLM can see and describe them
+- **New component**: `file-attachment.tsx` — `readDroppedFiles()` utility + `FileAttachmentBar` chip UI
+- **LLM types extended**: `LLMMessage.content` now supports `string | ContentBlock[]` (text + image blocks)
+- **All 3 providers updated**: Anthropic (native content blocks), OpenAI (image_url format), Mock (text extraction fallback)
 
 ### Action card UI
 

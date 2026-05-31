@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { logoutAction } from "../(auth)/actions";
 import { ProjectList } from "./_components/project-list";
+import { ThemeSwitcher } from "./_components/theme-switcher";
 
 export default async function AppLayout({
   children,
@@ -46,8 +47,11 @@ export default async function AppLayout({
         <ProjectList projects={projects} />
 
         <footer className="border-t border-border p-3 text-xs">
-          <div className="truncate font-medium" title={user.email}>
-            {user.name || user.email}
+          <div className="flex items-center justify-between">
+            <div className="truncate font-medium" title={user.email}>
+              {user.name || user.email}
+            </div>
+            <ThemeSwitcher />
           </div>
           <div
             className="truncate text-muted-foreground"

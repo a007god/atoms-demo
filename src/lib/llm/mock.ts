@@ -10,7 +10,10 @@ export class MockProvider implements LLMProvider {
     opts?: LLMStreamOptions,
   ): AsyncIterable<string> {
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    const userText = lastUser?.content ?? "(空消息)";
+    const rawContent = lastUser?.content ?? "(空消息)";
+    const userText = typeof rawContent === "string"
+      ? rawContent
+      : rawContent.filter((b) => b.type === "text").map((b) => b.text).join("\n") || "(图片)";
 
     const reply =
       `（Mock 回复）收到："${userText}"。\n\n` +
