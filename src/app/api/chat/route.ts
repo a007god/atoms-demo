@@ -410,7 +410,7 @@ async function processImages(text: string): Promise<string> {
 
   if (targets.length === 0) return text;
 
-  const toGenerate = targets.slice(0, 5);
+  const toGenerate = targets.slice(0, 20);
   const results = await Promise.allSettled(
     toGenerate.map((item) =>
       generateImage(item.prompt, { size: "1024x1024" }),
@@ -430,8 +430,8 @@ async function processImages(text: string): Promise<string> {
     }
   }
 
-  // Replace any remaining unprocessed targets (beyond the 5 limit) with placeholders
-  for (let i = 5; i < targets.length; i++) {
+  // Replace any remaining unprocessed targets (beyond the 20 limit) with placeholders
+  for (let i = 20; i < targets.length; i++) {
     const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#c8956c"/><text x="200" y="150" text-anchor="middle" fill="#fff" font-size="14" font-family="sans-serif">' + targets[i].prompt.slice(0, 30) + '</text></svg>')}`;
     result = result.replace(targets[i].full, placeholder);
   }

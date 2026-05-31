@@ -54,7 +54,7 @@ export function HtmlPreviewPanel({ html, onClose }: Props) {
       </div>
       <div className="flex flex-1 items-start justify-center overflow-auto bg-background/50 p-4">
         <iframe
-          srcDoc={html}
+          srcDoc={injectNavigationGuard(html)}
           sandbox="allow-scripts"
           title="Preview"
           className={[
@@ -65,4 +65,24 @@ export function HtmlPreviewPanel({ html, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+function injectNavigationGuard(html: string): string {
+  const script = `<script>
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('a');
+  if (!a) return;
+  var href = a.getAttribute('href');
+  if (!href) return;
+  // Allow anchor links (in-page navigation)
+  if (href.startsWith('#')) return;
+  // Block all other navigation
+  e.preventDefault();
+});
+</script>`;
+  // Inject before </body> or at the end
+  if (html.includes('</body>')) {
+    return html.replace('</body>', script + '</body>');
+  }
+  return html + script;
 }
