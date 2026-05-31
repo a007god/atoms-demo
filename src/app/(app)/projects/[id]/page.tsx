@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import type { ChatMode } from "@/lib/agents";
-import { ChatPanel, type ChatMessage } from "./_components/chat-panel";
+import type { ChatMessage } from "./_components/chat-panel";
+import { ProjectWorkspace } from "./_components/project-workspace";
 
 type Params = Promise<{ id: string }>;
 
@@ -62,7 +63,7 @@ export default async function ProjectDetailPage({
         </p>
       </header>
       <div className="flex-1 overflow-hidden">
-        <ChatPanel
+        <ProjectWorkspace
           projectId={project.id}
           initialMessages={initialMessages}
           initialMode={initialMode}

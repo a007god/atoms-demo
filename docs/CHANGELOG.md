@@ -4,6 +4,38 @@ All notable changes per development session. Maintained alongside the code; one 
 
 ---
 
+## Session 4 — 2026-05-31 — @mention routing + HTML preview panel
+
+Two new features that extend the chat experience: targeted agent routing via @mentions, and a live HTML preview panel (App Viewer).
+
+### @mention agent routing
+
+- **Mention popover** (`mention-popover.tsx`): typing `@` in the chat textarea opens a dropdown listing all 7 agents. Filters as you type, supports keyboard navigation (↑↓ Enter Esc).
+- **Parse & route**: on send, `@AgentName` tokens are extracted from the message. If present, the backend routes to exactly those agents in @ order (serial), bypassing the mode-based pipeline.
+- **API extension**: `/api/chat` body schema now accepts an optional `agents: AgentId[]` field. When provided, it overrides the `mode`-based pipeline lookup.
+- **UX**: placeholder text updated to hint at `@` usage. Multiple @mentions supported (e.g., `@Bob @Alex` → Bob then Alex).
+
+### HTML preview panel (App Viewer — SPEC §2.4)
+
+- **Auto-detection**: when any assistant message contains a fenced ` ```html ` code block, the right-side preview panel opens automatically. Updates live during streaming (partial blocks render as they arrive).
+- **Split layout**: project detail page now uses `ProjectWorkspace` wrapper — left half is chat, right half is the iframe preview. Panel only appears when HTML is detected; closes via ✕ button.
+- **Viewport toggle**: desktop (full-width) / mobile (375px) switch in the preview header.
+- **Security**: iframe uses `sandbox="allow-scripts"` (no `allow-same-origin`) + `srcDoc` injection.
+- **New files**: `html-preview-panel.tsx`, `project-workspace.tsx`.
+
+### Plumbing
+
+- `src/lib/agents/index.ts`: added `AGENT_LIST` convenience export.
+- `chat-panel.tsx`: new `onHtmlDetected` callback prop; `extractLatestHtml()` utility exported for reuse.
+- `page.tsx` (project detail): now renders `<ProjectWorkspace>` instead of `<ChatPanel>` directly.
+
+### Verification
+
+- `tsc --noEmit` — 0 errors.
+- `next dev` — starts cleanly on port 3000.
+
+---
+
 ## Session 3 — 2026-05-31 — App shell + Chat/SSE + Multi-agent + UI polish
 
 Covers SPEC §1.2 + §1.3 + §1.4 in one stretch, plus a layout refactor and the modal/markdown pattern decisions.

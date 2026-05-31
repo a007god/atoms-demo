@@ -35,7 +35,7 @@ export function WelcomeChat() {
             autoFocus
             placeholder="例如：帮我做一个咖啡店的营销 Landing Page，要醒目的 Hero 和功能区。"
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 formRef.current?.requestSubmit();
               }

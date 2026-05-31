@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AGENTS, type AgentId, type ChatMode } from "@/lib/agents";
+import { AGENTS, AGENT_LIST, type AgentId, type ChatMode } from "@/lib/agents";
 import { ActionsMenu } from "../../../_components/actions-menu";
 import { MarkdownMessage } from "./markdown-message";
+import { MentionPopover, getFilteredAgents } from "./mention-popover";
 
 export type ChatMessage = {
   id: string;
@@ -16,22 +17,31 @@ type Props = {
   projectId: string;
   initialMessages: ChatMessage[];
   initialMode?: ChatMode;
+  onHtmlDetected?: (html: string | null) => void;
 };
 
 export function ChatPanel({
   projectId,
   initialMessages,
   initialMode = "chat",
+  onHtmlDetected,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ChatMode>(initialMode);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+
+  // @mention state
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const inputWrapperRef = useRef<HTMLDivElement>(null);
 
   // Stick to bottom whenever messages change.
   useEffect(() => {
@@ -41,18 +51,32 @@ export function ChatPanel({
     });
   }, [messages]);
 
-  // Cancel any in-flight stream on unmount.
+  // Cancel any in-flight stream on real unmount (page navigation).
+  // Using a ref to skip the Strict Mode fake unmount.
+  const mountedRef = useRef(true);
   useEffect(() => {
-    return () => abortRef.current?.abort();
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      // Delay abort slightly so Strict Mode remount doesn't kill in-flight requests
+      setTimeout(() => {
+        if (!mountedRef.current) {
+          abortRef.current?.abort();
+        }
+      }, 50);
+    };
   }, []);
 
   // Pick up ?prompt=... left by the welcome screen and auto-send it.
+  const autoSentRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (autoSentRef.current) return;
     const sp = new URLSearchParams(window.location.search);
     const prompt = sp.get("prompt");
     if (!prompt) return;
 
+    autoSentRef.current = true;
     const url = new URL(window.location.href);
     url.searchParams.delete("prompt");
     window.history.replaceState({}, "", url.toString());
@@ -61,9 +85,83 @@ export function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Notify parent when HTML code blocks are detected in messages
+  useEffect(() => {
+    if (!onHtmlDetected) return;
+    onHtmlDetected(extractLatestHtml(messages));
+  }, [messages, onHtmlDetected]);
+
+  // Mention helpers
+  function handleInputChange(value: string) {
+    setInput(value);
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const cursorPos = ta.selectionStart;
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/@(\w*)$/);
+    if (atMatch) {
+      setMentionOpen(true);
+      setMentionQuery(atMatch[1]);
+      setMentionIndex(0);
+    } else {
+      setMentionOpen(false);
+      setMentionQuery("");
+    }
+  }
+
+  function handleMentionSelect(agentId: AgentId) {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const cursorPos = ta.selectionStart;
+    const textBeforeCursor = input.slice(0, cursorPos);
+    const atIdx = textBeforeCursor.lastIndexOf("@");
+    const agentName = AGENTS[agentId].name;
+    const before = input.slice(0, atIdx);
+    const after = input.slice(cursorPos);
+    const newValue = `${before}@${agentName} ${after}`;
+    setInput(newValue);
+    setMentionOpen(false);
+    setMentionQuery("");
+    setTimeout(() => {
+      const newPos = atIdx + agentName.length + 2;
+      ta.selectionStart = newPos;
+      ta.selectionEnd = newPos;
+      ta.focus();
+    }, 0);
+  }
+
+  function handleMentionKeyDown(e: React.KeyboardEvent): boolean {
+    if (!mentionOpen) return false;
+    const filtered = getFilteredAgents(mentionQuery);
+    if (filtered.length === 0) return false;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setMentionIndex((i) => (i + 1) % filtered.length);
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setMentionIndex((i) => (i - 1 + filtered.length) % filtered.length);
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      handleMentionSelect(filtered[mentionIndex].id);
+      return true;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setMentionOpen(false);
+      return true;
+    }
+    return false;
+  }
+
   async function send(textOverride?: string) {
     const text = (textOverride ?? input).trim();
     if (!text || streaming) return;
+
+    const mentioned = parseMentions(text);
 
     const userTempId = `temp-user-${Date.now()}`;
     setMessages((prev) => [
@@ -71,6 +169,7 @@ export function ChatPanel({
       { id: userTempId, role: "user", agent: null, content: text },
     ]);
     setInput("");
+    setMentionOpen(false);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setStreaming(true);
     setError(null);
@@ -86,6 +185,7 @@ export function ChatPanel({
           projectId,
           message: text,
           mode,
+          ...(mentioned.length > 0 ? { agents: mentioned } : {}),
           userTempId,
         }),
         signal: controller.signal,
@@ -210,21 +310,33 @@ export function ChatPanel({
           }}
           className="mx-auto max-w-2xl px-6 py-4"
         >
-          <div className="rounded-2xl border border-input bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring">
+          <div ref={inputWrapperRef} className="relative rounded-2xl border border-input bg-background shadow-sm focus-within:ring-2 focus-within:ring-ring">
+            <MentionPopover
+              query={mentionQuery}
+              visible={mentionOpen}
+              anchorRef={inputWrapperRef}
+              selectedIndex={mentionIndex}
+              onSelect={handleMentionSelect}
+              onClose={() => setMentionOpen(false)}
+            />
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => {
-                setInput(e.target.value);
+                handleInputChange(e.target.value);
                 autoResize(e.currentTarget);
               }}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={() => setComposing(false)}
               disabled={streaming}
               rows={3}
               maxLength={8000}
               placeholder={
-                streaming ? "回复中…" : "输入消息，Enter 发送 · Shift + Enter 换行"
+                streaming ? "回复中…" : "输入消息，@ 可指定 Agent · Enter 发送 · Shift+Enter 换行"
               }
               onKeyDown={(e) => {
+                if (e.nativeEvent.isComposing) return;
+                if (handleMentionKeyDown(e)) return;
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   if (!streaming) formRef.current?.requestSubmit();
@@ -333,4 +445,39 @@ async function safeText(res: Response): Promise<string> {
   } catch {
     return "(response body unreadable)";
   }
+}
+
+const AGENT_NAME_TO_ID: Record<string, AgentId> = Object.fromEntries(
+  AGENT_LIST.map((a) => [a.name.toLowerCase(), a.id]),
+) as Record<string, AgentId>;
+
+function parseMentions(text: string): AgentId[] {
+  const regex = /@(Mike|Emma|Bob|Alex|David|Iris|Sarah)\b/gi;
+  const seen = new Set<AgentId>();
+  const result: AgentId[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const id = AGENT_NAME_TO_ID[match[1].toLowerCase()];
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      result.push(id);
+    }
+  }
+  return result;
+}
+
+export function extractLatestHtml(messages: ChatMessage[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    // Match complete fenced HTML blocks
+    const complete = m.content.match(/```(?:html|htm)\s*\n([\s\S]*?)```/);
+    if (complete) return complete[1];
+    // Match in-progress (unclosed) HTML block at end of last assistant message
+    if (i === messages.length - 1) {
+      const partial = m.content.match(/```(?:html|htm)\s*\n([\s\S]+)$/);
+      if (partial) return partial[1];
+    }
+  }
+  return null;
 }

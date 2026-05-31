@@ -4,10 +4,15 @@ import { prisma } from "@/lib/db";
 import { getProvider, type LLMMessage } from "@/lib/llm";
 import { AGENTS, PIPELINES, type AgentId } from "@/lib/agents";
 
+const agentIdEnum = z.enum([
+  "mike", "emma", "bob", "alex", "david", "iris", "sarah",
+]);
+
 const bodySchema = z.object({
   projectId: z.string().min(1),
   message: z.string().trim().min(1).max(8000),
   mode: z.enum(["chat", "team"]).default("chat"),
+  agents: z.array(agentIdEnum).min(1).optional(),
   userTempId: z.string().optional(),
 });
 
@@ -38,7 +43,7 @@ export async function POST(req: Request): Promise<Response> {
   if (!parsed.success) {
     return new Response(parsed.error.message, { status: 400 });
   }
-  const { projectId, message, mode, userTempId } = parsed.data;
+  const { projectId, message, mode, agents: mentionedAgents, userTempId } = parsed.data;
 
   const project = await prisma.project.findFirst({
     where: { id: projectId, ownerId: userId },
@@ -72,7 +77,10 @@ export async function POST(req: Request): Promise<Response> {
   });
 
   const provider = getProvider();
-  const pipeline = PIPELINES[mode];
+  const pipeline: (AgentId | null)[] =
+    mentionedAgents && mentionedAgents.length > 0
+      ? mentionedAgents
+      : PIPELINES[mode];
   const encoder = new TextEncoder();
 
   // Normalize prior turns so messages strictly alternate user/assistant —
