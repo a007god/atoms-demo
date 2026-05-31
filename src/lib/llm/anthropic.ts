@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { MessageParam } from "@anthropic-ai/sdk/resources/messages/messages";
 import type { LLMMessage, LLMProvider, LLMStreamOptions, ContentBlock } from "./types";
 
 export class AnthropicProvider implements LLMProvider {
@@ -46,7 +47,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 }
 
-function toAnthropicContent(content: string | ContentBlock[]): string | Anthropic.MessageCreateParams.Message["content"] {
+function toAnthropicContent(content: string | ContentBlock[]): MessageParam["content"] {
   if (typeof content === "string") return content;
   return content.map((block) => {
     if (block.type === "text") {

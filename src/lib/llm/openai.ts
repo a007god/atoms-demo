@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { LLMMessage, LLMProvider, LLMStreamOptions } from "./types";
 
 export class OpenAIProvider implements LLMProvider {
@@ -20,19 +21,21 @@ export class OpenAIProvider implements LLMProvider {
     messages: LLMMessage[],
     opts?: LLMStreamOptions,
   ): AsyncIterable<string> {
+    const mapped: ChatCompletionMessageParam[] = messages.map((m) => {
+      const content = typeof m.content === "string"
+        ? m.content
+        : m.content.map((b) =>
+            b.type === "text"
+              ? { type: "text" as const, text: b.text }
+              : { type: "image_url" as const, image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
+          );
+      return { role: m.role, content } as ChatCompletionMessageParam;
+    });
+
     const stream = await this.client.chat.completions.create(
       {
         model: this.model,
-        messages: messages.map((m) => ({
-          role: m.role,
-          content: typeof m.content === "string"
-            ? m.content
-            : m.content.map((b) =>
-                b.type === "text"
-                  ? { type: "text" as const, text: b.text }
-                  : { type: "image_url" as const, image_url: { url: `data:${b.source.media_type};base64,${b.source.data}` } }
-              ),
-        })),
+        messages: mapped,
         stream: true,
       },
       { signal: opts?.signal },
