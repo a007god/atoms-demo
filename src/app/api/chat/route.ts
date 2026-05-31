@@ -118,7 +118,48 @@ export async function POST(req: Request): Promise<Response> {
           const agentId = worklist[i];
           const agent = agentId ? AGENTS[agentId] : null;
 
-          const composedUser = composeUserMessage(message, turnOutputs);
+          // Pre-generate images for Alex if the task involves UI/pages
+          let imageContext = "";
+          if (agentId === "alex" && isUiTask(message, turnOutputs)) {
+            const imgTempId = `temp-img-gen-${Date.now()}`;
+            write({ type: "start", tempId: imgTempId, agent: "alex" });
+            write({ type: "delta", tempId: imgTempId, text: "正在生成页面素材图片…\n" });
+
+            try {
+              const imagePrompts = await planImages(provider, message, turnOutputs, historyLLM);
+              if (imagePrompts.length > 0) {
+                const images = await generateBatchImages(imagePrompts);
+                const available = images.filter((img) => img.url !== null);
+                if (available.length > 0) {
+                  imageContext = "\n\n**以下图片已生成，请直接在 HTML 中使用这些 data URL：**\n" +
+                    available.map((img, idx) => `- 图${idx + 1}（${img.desc}）: ${img.url}`).join("\n");
+                  write({ type: "delta", tempId: imgTempId, text: `已生成 ${available.length} 张图片，开始编写页面…\n` });
+                }
+              }
+            } catch (imgErr) {
+              console.error("Pre-generation images failed:", imgErr);
+            }
+
+            // Remove the image generation message (it was just a status indicator)
+            write({ type: "delta", tempId: imgTempId, text: "" });
+            // Save as a brief status message
+            const imgSaved = await prisma.message.create({
+              data: {
+                conversationId,
+                role: "assistant",
+                agent: "alex",
+                content: imageContext ? `已生成 ${imageContext.split("data:image").length - 1} 张素材图片。` : "准备开始编写页面…",
+              },
+              select: { id: true },
+            });
+            write({ type: "saved", tempId: imgTempId, messageId: imgSaved.id });
+            if (agentId) turnOutputs.push({ id: agentId, content: "" });
+            depth++;
+            // Now continue to the actual Alex code generation below
+            // but DON'T increment i — we want to run Alex again with the image context
+          }
+
+          const composedUser = composeUserMessage(message, turnOutputs) + imageContext;
           const llmMessages: LLMMessage[] = [
             ...(agent
               ? [{ role: "system", content: agent.systemPrompt } as LLMMessage]
@@ -149,24 +190,6 @@ export async function POST(req: Request): Promise<Response> {
             select: { id: true },
           });
           write({ type: "saved", tempId, messageId: saved.id });
-
-          // Post-process: generate images for Alex's HTML output
-          if (agentId === "alex" && containsHtmlBlock(accumulated)) {
-            try {
-              const processed = await processImages(accumulated);
-              if (processed !== accumulated) {
-                await prisma.message.update({
-                  where: { id: saved.id },
-                  data: { content: processed },
-                });
-                write({ type: "replace-content", messageId: saved.id, content: processed });
-                const idx = turnOutputs.findIndex(o => o.id === agentId);
-                if (idx >= 0) turnOutputs[idx].content = processed;
-              }
-            } catch (imgErr) {
-              console.error("Image generation failed:", imgErr);
-            }
-          }
 
           if (agentId) {
             turnOutputs.push({ id: agentId, content: accumulated });
@@ -362,86 +385,52 @@ function composeUserMessage(
   );
 }
 
-function containsHtmlBlock(text: string): boolean {
-  return /```\s*(?:html|htm)\s*\n[\s\S]*?```/i.test(text);
+function isUiTask(message: string, turnOutputs: { id: AgentId; content: string }[]): boolean {
+  const combined = message + turnOutputs.map(o => o.content).join(" ");
+  const keywords = ["页面", "落地页", "网页", "landing", "page", "UI", "界面", "表单", "form", "app", "工具", "计算器", "展示"];
+  return keywords.some(k => combined.toLowerCase().includes(k.toLowerCase()));
 }
 
-/**
- * Process images in Alex's output:
- * 1. Replace [generate-image: prompt] markers
- * 2. Replace placeholder img src (placehold.co, via.placeholder, unsplash, empty src)
- *    using the alt text as the generation prompt
- * Max 3 images per message.
- */
-async function processImages(text: string): Promise<string> {
-  const targets: { full: string; replacement: string; prompt: string }[] = [];
+async function planImages(
+  provider: { stream: (msgs: LLMMessage[], opts?: object) => AsyncIterable<string> },
+  message: string,
+  turnOutputs: { id: AgentId; content: string }[],
+  historyLLM: LLMMessage[],
+): Promise<string[]> {
+  const context = turnOutputs.map(o => `${AGENTS[o.id].name}: ${o.content.slice(0, 200)}`).join("\n");
+  const planMessages: LLMMessage[] = [
+    { role: "system", content: `你是一个图片规划助手。根据用户需求和团队讨论，列出这个页面需要的图片（最多5张）。
+每行一个英文描述，用于 AI 生图。描述要具体（风格、颜色、构图、主体）。
+只输出描述列表，每行一个，不要编号、不要其他文字。如果不需要图片就输出空。` },
+    { role: "user", content: `需求：${message}\n\n团队讨论：\n${context}` },
+  ];
 
-  // Strategy 1: explicit markers [generate-image: ...]
-  const markerRe = /\[generate-image:\s*(.+?)\]/g;
-  let m;
-  while ((m = markerRe.exec(text)) !== null) {
-    targets.push({ full: m[0], replacement: "", prompt: m[1] });
+  let result = "";
+  for await (const chunk of provider.stream(planMessages, {})) {
+    result += chunk;
+    if (result.length > 1000) break;
   }
 
-  // Strategy 2: <img> tags with placeholder src or empty src, using alt as prompt
-  const imgRe = /<img\s[^>]*src=["']([^"']*)["'][^>]*>/gi;
-  while ((m = imgRe.exec(text)) !== null) {
-    const src = m[1];
-    const isPlaceholder =
-      !src ||
-      src.includes("placehold") ||
-      src.includes("placeholder") ||
-      src.includes("unsplash") ||
-      src.includes("picsum") ||
-      src.includes("lorem") ||
-      src.includes("example.com") ||
-      src.startsWith("#") ||
-      src === "about:blank";
-    if (!isPlaceholder) continue;
+  return result.trim().split("\n").filter(line => line.trim().length > 10).slice(0, 5);
+}
 
-    const altMatch = m[0].match(/alt=["']([^"']+)["']/i);
-    if (!altMatch) continue;
+async function generateBatchImages(prompts: string[]): Promise<{ desc: string; url: string | null }[]> {
+  const results: { desc: string; url: string | null }[] = [];
 
-    const alreadyHasMarker = targets.some((t) => m![0].includes(t.full));
-    if (alreadyHasMarker) continue;
-
-    targets.push({ full: src, replacement: "", prompt: altMatch[1] });
-  }
-
-  if (targets.length === 0) return text;
-
-  const toGenerate = targets.slice(0, 20);
-
-  // Generate in batches of 3 to avoid rate limiting
-  const results: PromiseSettledResult<{ b64: string; revisedPrompt?: string }>[] = [];
-  for (let batch = 0; batch < toGenerate.length; batch += 3) {
-    const chunk = toGenerate.slice(batch, batch + 3);
+  for (let batch = 0; batch < prompts.length; batch += 3) {
+    const chunk = prompts.slice(batch, batch + 3);
     const batchResults = await Promise.allSettled(
-      chunk.map((item) =>
-        generateImage(item.prompt, { size: "1024x1024" }),
-      ),
+      chunk.map((prompt) => generateImage(prompt, { size: "1024x1024" })),
     );
-    results.push(...batchResults);
-  }
-
-  let result = text;
-  for (let i = 0; i < toGenerate.length; i++) {
-    const r = results[i];
-    if (r.status === "fulfilled") {
-      const dataUrl = `data:image/png;base64,${r.value.b64}`;
-      result = result.replace(toGenerate[i].full, dataUrl);
-    } else {
-      // Failed to generate — replace with a CSS gradient placeholder
-      const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#d4a574"/><text x="200" y="150" text-anchor="middle" fill="#fff" font-size="14" font-family="sans-serif">' + toGenerate[i].prompt.slice(0, 30) + '</text></svg>')}`;
-      result = result.replace(toGenerate[i].full, placeholder);
+    for (let j = 0; j < chunk.length; j++) {
+      const r = batchResults[j];
+      if (r.status === "fulfilled") {
+        results.push({ desc: chunk[j], url: `data:image/png;base64,${r.value.b64}` });
+      } else {
+        results.push({ desc: chunk[j], url: null });
+      }
     }
   }
 
-  // Replace any remaining unprocessed targets (beyond the 20 limit) with placeholders
-  for (let i = 20; i < targets.length; i++) {
-    const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#c8956c"/><text x="200" y="150" text-anchor="middle" fill="#fff" font-size="14" font-family="sans-serif">' + targets[i].prompt.slice(0, 30) + '</text></svg>')}`;
-    result = result.replace(targets[i].full, placeholder);
-  }
-
-  return result;
+  return results;
 }

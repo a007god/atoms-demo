@@ -326,7 +326,7 @@ export function ChatPanel({
                 onShowPreview={onPreviewToggle}
               />
             ))}
-            {streaming && (messages.length === 0 || messages[messages.length - 1].role !== "assistant" || messages[messages.length - 1].content === "") && (
+            {streaming && messages.length > 0 && messages[messages.length - 1].role === "user" && (
               <div className="flex justify-start">
                 <div className="max-w-[85%]">
                   <div className="mb-1 text-[11px] text-muted-foreground">生成中</div>
