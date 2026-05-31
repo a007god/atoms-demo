@@ -69,19 +69,15 @@ export function ChatPanel({
     });
   }, [messages]);
 
-  // Cancel any in-flight stream on real unmount (page navigation).
-  // Using a ref to skip the Strict Mode fake unmount.
+  // On real unmount (page navigation), do NOT abort the request —
+  // let the server finish generating and persist messages to DB.
+  // User will see the completed messages when they navigate back.
+  // Only the explicit "stop" button aborts.
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      // Delay abort slightly so Strict Mode remount doesn't kill in-flight requests
-      setTimeout(() => {
-        if (!mountedRef.current) {
-          abortRef.current?.abort();
-        }
-      }, 50);
     };
   }, []);
 

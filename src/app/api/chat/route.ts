@@ -131,11 +131,12 @@ export async function POST(req: Request): Promise<Response> {
           write({ type: "start", tempId, agent: agentId });
 
           let accumulated = "";
-          for await (const chunk of provider.stream(llmMessages, {
-            signal: req.signal,
-          })) {
+          for await (const chunk of provider.stream(llmMessages, {})) {
             accumulated += chunk;
-            write({ type: "delta", tempId, text: chunk });
+            // If client disconnected, still accumulate but skip writing
+            if (!req.signal.aborted) {
+              write({ type: "delta", tempId, text: chunk });
+            }
           }
 
           const saved = await prisma.message.create({
@@ -152,7 +153,7 @@ export async function POST(req: Request): Promise<Response> {
           // Post-process: generate images if Alex output contains markers
           if (agentId === "alex" && hasImageMarkers(accumulated)) {
             try {
-              const processed = await replaceImageMarkers(accumulated, req.signal);
+              const processed = await replaceImageMarkers(accumulated);
               if (processed !== accumulated) {
                 await prisma.message.update({
                   where: { id: saved.id },
@@ -325,7 +326,6 @@ function hasImageMarkers(text: string): boolean {
 
 async function replaceImageMarkers(
   text: string,
-  signal?: AbortSignal,
 ): Promise<string> {
   IMAGE_MARKER_RE.lastIndex = 0;
   const matches: { full: string; prompt: string }[] = [];
@@ -339,7 +339,7 @@ async function replaceImageMarkers(
   const toGenerate = matches.slice(0, 3);
   const results = await Promise.allSettled(
     toGenerate.map((item) =>
-      generateImage(item.prompt, { size: "1024x1024", signal }),
+      generateImage(item.prompt, { size: "1024x1024" }),
     ),
   );
 
