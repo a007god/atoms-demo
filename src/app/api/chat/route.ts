@@ -391,7 +391,10 @@ async function processImages(text: string): Promise<string> {
       !src ||
       src.includes("placehold") ||
       src.includes("placeholder") ||
-      src.includes("unsplash.com/photos") ||
+      src.includes("unsplash") ||
+      src.includes("picsum") ||
+      src.includes("lorem") ||
+      src.includes("example.com") ||
       src.startsWith("#") ||
       src === "about:blank";
     if (!isPlaceholder) continue;
@@ -407,7 +410,7 @@ async function processImages(text: string): Promise<string> {
 
   if (targets.length === 0) return text;
 
-  const toGenerate = targets.slice(0, 3);
+  const toGenerate = targets.slice(0, 5);
   const results = await Promise.allSettled(
     toGenerate.map((item) =>
       generateImage(item.prompt, { size: "1024x1024" }),
@@ -420,7 +423,18 @@ async function processImages(text: string): Promise<string> {
     if (r.status === "fulfilled") {
       const dataUrl = `data:image/png;base64,${r.value.b64}`;
       result = result.replace(toGenerate[i].full, dataUrl);
+    } else {
+      // Failed to generate — replace with a CSS gradient placeholder
+      const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#d4a574"/><text x="200" y="150" text-anchor="middle" fill="#fff" font-size="14" font-family="sans-serif">' + toGenerate[i].prompt.slice(0, 30) + '</text></svg>')}`;
+      result = result.replace(toGenerate[i].full, placeholder);
     }
   }
+
+  // Replace any remaining unprocessed targets (beyond the 5 limit) with placeholders
+  for (let i = 5; i < targets.length; i++) {
+    const placeholder = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#c8956c"/><text x="200" y="150" text-anchor="middle" fill="#fff" font-size="14" font-family="sans-serif">' + targets[i].prompt.slice(0, 30) + '</text></svg>')}`;
+    result = result.replace(targets[i].full, placeholder);
+  }
+
   return result;
 }
