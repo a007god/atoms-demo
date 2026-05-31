@@ -198,13 +198,23 @@ export async function POST(req: Request): Promise<Response> {
 
         // Mike closing summary: if team mode and last speaker wasn't Mike
         if (mode === "team" && turnOutputs.length > 0 && turnOutputs[turnOutputs.length - 1].id !== "mike" && depth < MAX_DEPTH) {
-          const mike = AGENTS["mike"];
-          const summaryPrompt = `你是 Mike，团队的 Team Leader。团队已经完成了工作，请用 2-3 句话总结本轮成果，告诉用户交付了什么、可以在右侧预览查看。不要 @任何人。`;
-          const composedUser = composeUserMessage(message, turnOutputs);
+          const summaryPrompt = `你是 Mike，团队的 Team Leader。团队已经完成了工作。
+用 2-3 句话总结本轮成果：交付了什么、用户可以点击"查看预览"按钮查看效果。
+**绝对禁止**：不要输出任何代码、HTML、CSS、markdown代码块。不要 @任何人。只说人话。`;
+
+          // Only pass a brief summary of what agents did, not their full output
+          const briefOutputs = turnOutputs.map(o => {
+            const a = AGENTS[o.id];
+            const brief = o.content.length > 100
+              ? o.content.slice(0, 100) + "...(代码已省略)"
+              : o.content;
+            return `【${a.name}】${brief}`;
+          }).join("\n");
+
           const llmMessages: LLMMessage[] = [
             { role: "system", content: summaryPrompt },
             ...historyLLM,
-            { role: "user", content: composedUser },
+            { role: "user", content: `用户需求：${message}\n\n团队产出摘要：\n${briefOutputs}` },
           ];
 
           const tempId = `temp-mike-summary-${Date.now()}`;
