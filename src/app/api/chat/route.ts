@@ -25,6 +25,7 @@ type Event =
   | { type: "delta"; tempId: string; text: string }
   | { type: "saved"; tempId: string; messageId: string }
   | { type: "replace-content"; messageId: string; content: string }
+  | { type: "title-updated"; title: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -196,6 +197,30 @@ export async function POST(req: Request): Promise<Response> {
         }
 
         write({ type: "done" });
+
+        // Generate a title for the project if this is the first message
+        if (history.length === 0) {
+          try {
+            const titleMessages: LLMMessage[] = [
+              { role: "system", content: "用中文为这段对话生成一个简短标题（5-15字），只输出标题本身，不要引号或其他内容。" },
+              { role: "user", content: message },
+            ];
+            let title = "";
+            for await (const chunk of provider.stream(titleMessages)) {
+              title += chunk;
+            }
+            title = title.trim().replace(/^["'"""'']+|["'"""'']+$/g, "").slice(0, 40);
+            if (title) {
+              await prisma.project.update({
+                where: { id: projectId },
+                data: { name: title },
+              });
+              write({ type: "title-updated", title });
+            }
+          } catch {
+            // Title generation is best-effort, don't fail the stream
+          }
+        }
       } catch (err) {
         console.error("/api/chat stream error:", err);
         const msg = err instanceof Error ? err.message : String(err);

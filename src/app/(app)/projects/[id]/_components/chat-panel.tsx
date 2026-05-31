@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AGENTS, AGENT_LIST, type AgentId, type ChatMode } from "@/lib/agents";
 import { ActionsMenu } from "../../../_components/actions-menu";
 import { MarkdownMessage } from "./markdown-message";
@@ -26,6 +27,7 @@ export function ChatPanel({
   initialMode = "chat",
   onHtmlDetected,
 }: Props) {
+  const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ChatMode>(initialMode);
@@ -291,6 +293,10 @@ export function ChatPanel({
             m.id === event.messageId ? { ...m, content: event.content as string } : m,
           ),
         );
+        return;
+      }
+      case "title-updated": {
+        router.refresh();
         return;
       }
       case "error": {
