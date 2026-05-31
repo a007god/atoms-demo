@@ -426,10 +426,7 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
 
   // Check if this message has a complete HTML block
   const htmlContent = !isUser && !isStreaming && message.content
-    ? (() => {
-        const matches = [...message.content.matchAll(/```\s*(?:html|htm)\s*\n([\s\S]*?)```/gi)];
-        return matches.length > 0 ? matches[matches.length - 1][1] : null;
-      })()
+    ? extractHtmlFromMessage(message.content)
     : null;
 
   return (
@@ -523,12 +520,32 @@ export function extractLatestHtml(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;
-    // Case-insensitive, match the LAST complete ```html block in the message
-    // (agent might output multiple code blocks; we want the final HTML one)
-    const allMatches = [...m.content.matchAll(/```\s*(?:html|htm)\s*\n([\s\S]*?)```/gi)];
-    if (allMatches.length > 0) {
-      return allMatches[allMatches.length - 1][1];
-    }
+    const html = extractHtmlFromMessage(m.content);
+    if (html) return html;
   }
   return null;
+}
+
+/**
+ * Extract HTML content from a fenced code block.
+ * Strategy: find the LAST occurrence of ```html...``` pattern.
+ * Uses greedy match to find the last closing ```.
+ */
+function extractHtmlFromMessage(content: string): string | null {
+  // Find all ```html or ```htm opening positions
+  const openRe = /```\s*(?:html|htm)\s*\n/gi;
+  let lastOpenEnd = -1;
+  let m;
+  while ((m = openRe.exec(content)) !== null) {
+    lastOpenEnd = m.index + m[0].length;
+  }
+  if (lastOpenEnd === -1) return null;
+
+  // From the last opening, find the last ``` that closes it
+  const rest = content.slice(lastOpenEnd);
+  // Find the last standalone ``` (on its own line or at end)
+  const closeIdx = rest.lastIndexOf("\n```");
+  if (closeIdx === -1) return null;
+
+  return rest.slice(0, closeIdx);
 }

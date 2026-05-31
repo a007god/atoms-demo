@@ -236,15 +236,16 @@ export async function POST(req: Request): Promise<Response> {
         if (history.length === 0) {
           try {
             const titleMessages: LLMMessage[] = [
-              { role: "system", content: "用中文为这段对话生成一个简短标题（5-15字），只输出标题本身，不要引号或其他内容。" },
-              { role: "user", content: message },
+              { role: "system", content: "你是一个标题生成器。根据用户的消息，生成一个5-10字的中文短标题。只输出标题文字，不要任何标点、引号、markdown、代码或解释。" },
+              { role: "user", content: `为以下内容生成标题：${message.slice(0, 100)}` },
             ];
             let title = "";
             for await (const chunk of provider.stream(titleMessages)) {
               title += chunk;
+              if (title.length > 30) break;
             }
-            title = title.trim().replace(/^["'"""'']+|["'"""'']+$/g, "").slice(0, 40);
-            if (title) {
+            title = title.trim().split("\n")[0].replace(/^[#"'"""''`*]+|[#"'"""''`*]+$/g, "").trim().slice(0, 20);
+            if (title && !title.includes("```") && !title.includes("<")) {
               await prisma.project.update({
                 where: { id: projectId },
                 data: { name: title },
@@ -252,7 +253,7 @@ export async function POST(req: Request): Promise<Response> {
               write({ type: "title-updated", title });
             }
           } catch {
-            // Title generation is best-effort, don't fail the stream
+            // Title generation is best-effort
           }
         }
       } catch (err) {
