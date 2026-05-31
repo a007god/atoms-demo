@@ -427,7 +427,7 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
   // Check if this message has a complete HTML block
   const htmlContent = !isUser && !isStreaming && message.content
     ? (() => {
-        const matches = [...message.content.matchAll(/```(?:html|htm)\s*\n([\s\S]*?)```/gi)];
+        const matches = [...message.content.matchAll(/```\s*(?:html|htm)\s*\n([\s\S]*?)```/gi)];
         return matches.length > 0 ? matches[matches.length - 1][1] : null;
       })()
     : null;
@@ -525,7 +525,7 @@ export function extractLatestHtml(messages: ChatMessage[]): string | null {
     if (m.role !== "assistant") continue;
     // Case-insensitive, match the LAST complete ```html block in the message
     // (agent might output multiple code blocks; we want the final HTML one)
-    const allMatches = [...m.content.matchAll(/```(?:html|htm)\s*\n([\s\S]*?)```/gi)];
+    const allMatches = [...m.content.matchAll(/```\s*(?:html|htm)\s*\n([\s\S]*?)```/gi)];
     if (allMatches.length > 0) {
       return allMatches[allMatches.length - 1][1];
     }

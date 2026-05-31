@@ -167,11 +167,11 @@ function CollapsibleCodeBlock({
  */
 function replaceStreamingCodeBlock(content: string): string {
   // Check if there's a complete HTML block — if so, leave it alone
-  if (/```(?:html|htm)\s*\n[\s\S]*?```/i.test(content)) {
+  if (/```\s*(?:html|htm)\s*\n[\s\S]*?```/i.test(content)) {
     return content;
   }
   // Check for an unclosed HTML block
-  const unclosed = content.match(/^([\s\S]*?)(```(?:html|htm)\s*\n[\s\S]*)$/i);
+  const unclosed = content.match(/^([\s\S]*?)(```\s*(?:html|htm)\s*\n[\s\S]*)$/i);
   if (unclosed) {
     const before = unclosed[1];
     const lineCount = (unclosed[2].match(/\n/g) || []).length;

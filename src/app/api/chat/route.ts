@@ -150,17 +150,16 @@ export async function POST(req: Request): Promise<Response> {
           });
           write({ type: "saved", tempId, messageId: saved.id });
 
-          // Post-process: generate images if Alex output contains markers
-          if (agentId === "alex" && hasImageMarkers(accumulated)) {
+          // Post-process: generate images for Alex's HTML output
+          if (agentId === "alex" && containsHtmlBlock(accumulated)) {
             try {
-              const processed = await replaceImageMarkers(accumulated);
+              const processed = await processImages(accumulated);
               if (processed !== accumulated) {
                 await prisma.message.update({
                   where: { id: saved.id },
                   data: { content: processed },
                 });
                 write({ type: "replace-content", messageId: saved.id, content: processed });
-                // Update turnOutputs with processed content
                 const idx = turnOutputs.findIndex(o => o.id === agentId);
                 if (idx >= 0) turnOutputs[idx].content = processed;
               }
@@ -352,26 +351,52 @@ function composeUserMessage(
   );
 }
 
-const IMAGE_MARKER_RE = /\[generate-image:\s*(.+?)\]/g;
-
-function hasImageMarkers(text: string): boolean {
-  IMAGE_MARKER_RE.lastIndex = 0;
-  return IMAGE_MARKER_RE.test(text);
+function containsHtmlBlock(text: string): boolean {
+  return /```\s*(?:html|htm)\s*\n[\s\S]*?```/i.test(text);
 }
 
-async function replaceImageMarkers(
-  text: string,
-): Promise<string> {
-  IMAGE_MARKER_RE.lastIndex = 0;
-  const matches: { full: string; prompt: string }[] = [];
-  let m;
-  while ((m = IMAGE_MARKER_RE.exec(text)) !== null) {
-    matches.push({ full: m[0], prompt: m[1] });
-  }
-  if (matches.length === 0) return text;
+/**
+ * Process images in Alex's output:
+ * 1. Replace [generate-image: prompt] markers
+ * 2. Replace placeholder img src (placehold.co, via.placeholder, unsplash, empty src)
+ *    using the alt text as the generation prompt
+ * Max 3 images per message.
+ */
+async function processImages(text: string): Promise<string> {
+  const targets: { full: string; replacement: string; prompt: string }[] = [];
 
-  // Generate images in parallel (max 3)
-  const toGenerate = matches.slice(0, 3);
+  // Strategy 1: explicit markers [generate-image: ...]
+  const markerRe = /\[generate-image:\s*(.+?)\]/g;
+  let m;
+  while ((m = markerRe.exec(text)) !== null) {
+    targets.push({ full: m[0], replacement: "", prompt: m[1] });
+  }
+
+  // Strategy 2: <img> tags with placeholder src or empty src, using alt as prompt
+  const imgRe = /<img\s[^>]*src=["']([^"']*)["'][^>]*>/gi;
+  while ((m = imgRe.exec(text)) !== null) {
+    const src = m[1];
+    const isPlaceholder =
+      !src ||
+      src.includes("placehold") ||
+      src.includes("placeholder") ||
+      src.includes("unsplash.com/photos") ||
+      src.startsWith("#") ||
+      src === "about:blank";
+    if (!isPlaceholder) continue;
+
+    const altMatch = m[0].match(/alt=["']([^"']+)["']/i);
+    if (!altMatch) continue;
+
+    const alreadyHasMarker = targets.some((t) => m![0].includes(t.full));
+    if (alreadyHasMarker) continue;
+
+    targets.push({ full: src, replacement: "", prompt: altMatch[1] });
+  }
+
+  if (targets.length === 0) return text;
+
+  const toGenerate = targets.slice(0, 3);
   const results = await Promise.allSettled(
     toGenerate.map((item) =>
       generateImage(item.prompt, { size: "1024x1024" }),
@@ -383,10 +408,7 @@ async function replaceImageMarkers(
     const r = results[i];
     if (r.status === "fulfilled") {
       const dataUrl = `data:image/png;base64,${r.value.b64}`;
-      result = result.replace(
-        toGenerate[i].full,
-        `![${toGenerate[i].prompt}](${dataUrl})`,
-      );
+      result = result.replace(toGenerate[i].full, dataUrl);
     }
   }
   return result;
