@@ -1,42 +1,77 @@
 # Atoms Demo
 
-A small reimagining of [Atoms.dev](https://atoms.dev) — a multi-agent AI workspace where a team of role-specialized agents collaborate to turn a natural-language prompt into a working app.
+一个 [Atoms.dev](https://atoms.dev) 风格的 AI 多智能体应用工厂。用户用自然语言描述创意，一支带角色分工的 AI 团队（Mike / Emma / Alex 等 7 人）协作产出可运行的网页应用，并在沙箱中实时预览。
 
-> Take-home for ROOT's full-stack role. See `docs/SPEC.md` for the full design.
+## Tech Stack
 
-## Stack
+| Layer | Choice |
+|-------|--------|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| Language | TypeScript 6 |
+| Styling | Tailwind CSS v4 + shadcn/ui |
+| Database | Prisma 7 — SQLite (dev) / PostgreSQL (prod) |
+| Auth | Auth.js v5 (Credentials, JWT session) |
+| LLM | Anthropic SDK + OpenAI SDK, NewAPI proxy |
+| Deploy | Vercel + Neon Postgres |
 
-- **Next.js 16** (App Router, TypeScript, Tailwind v4)
-- **Prisma 7 + SQLite** (Postgres in deploy)
-- **Auth.js v5** (Credentials)
-- **next-intl** (zh / en)
-- **Vercel AI SDK** + OpenAI / Anthropic SDKs over a NewAPI-style proxy
-- **shadcn/ui** components (added manually due to a current CLI/Zod 4 incompatibility)
+## Local Development
 
-## Quick start
-
-```powershell
+```bash
+# 1. Install dependencies
 pnpm install
-cp .env.example .env.local        # then fill in real values
-pnpm prisma migrate dev           # once models are defined
+
+# 2. Configure environment
+cp .env.example .env.local
+# Fill in your API keys (see .env.example for details)
+
+# 3. Initialize local database (SQLite)
+pnpm db:migrate
+
+# 4. Start dev server
 pnpm dev
 ```
 
-App will be at <http://localhost:3000>.
+App runs at http://localhost:3000.
 
-## Env vars
+## Environment Variables
 
-See `.env.example`. The notable ones:
+See `.env.example` for the full template. Key points:
 
-- `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` — for a NewAPI-style proxy you can use the **same** key for both.
-- `OPENAI_BASE_URL` ends in `/v1`; `ANTHROPIC_BASE_URL` does not.
-- `DEFAULT_PROVIDER=mock` keeps things offline-friendly out of the box.
+- `DATABASE_URL="file:./dev.db"` for local SQLite; Postgres connection string for production
+- `OPENAI_BASE_URL` must end with `/v1`; `ANTHROPIC_BASE_URL` must NOT
+- `DEFAULT_PROVIDER=mock` works offline without any API key
 
-## Docs
+## Features
 
-- `docs/SPEC.md` — full design (基础功能 / 扩展功能, data model, env, deployment)
-- `docs/REPORT.md` — submission notes (created at the end)
+- Multi-agent team collaboration (7 agents with distinct roles and personalities)
+- Mode switching: Chat / Team / Engineer
+- @mention routing — target specific agents directly
+- Live HTML preview panel (App Viewer) with desktop/mobile viewport
+- File drag-and-drop upload (text + images, multimodal LLM support)
+- 3 color themes (Warm / Dark / Ocean) with persistence
+- ZIP export for generated HTML
+- Full auth flow (register / login / logout)
+- Project CRUD with conversation history
 
-## Online demo
+## Project Structure
 
-> Deployed URL will be added once the first feature ships to Vercel.
+```
+src/
+├── app/
+│   ├── (auth)/          # Login / Signup pages
+│   ├── (app)/           # Authenticated app shell
+│   │   ├── projects/    # Project detail + chat
+│   │   └── _components/ # Sidebar, welcome, theme switcher
+│   └── api/chat/        # SSE streaming endpoint
+├── lib/
+│   ├── llm/             # Provider abstraction (mock/openai/anthropic)
+│   ├── agents/          # Agent definitions + pipeline orchestration
+│   ├── auth/            # Auth.js config
+│   └── db/              # Prisma client (dual SQLite/Pg adapter)
+└── generated/prisma/    # Generated Prisma client
+```
+
+## Documentation
+
+- `docs/SPEC.md` — Full design spec (features, data model, API, deployment)
+- `docs/CHANGELOG.md` — Per-session development log
