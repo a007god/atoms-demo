@@ -411,11 +411,18 @@ async function processImages(text: string): Promise<string> {
   if (targets.length === 0) return text;
 
   const toGenerate = targets.slice(0, 20);
-  const results = await Promise.allSettled(
-    toGenerate.map((item) =>
-      generateImage(item.prompt, { size: "1024x1024" }),
-    ),
-  );
+
+  // Generate in batches of 3 to avoid rate limiting
+  const results: PromiseSettledResult<{ b64: string; revisedPrompt?: string }>[] = [];
+  for (let batch = 0; batch < toGenerate.length; batch += 3) {
+    const chunk = toGenerate.slice(batch, batch + 3);
+    const batchResults = await Promise.allSettled(
+      chunk.map((item) =>
+        generateImage(item.prompt, { size: "1024x1024" }),
+      ),
+    );
+    results.push(...batchResults);
+  }
 
   let result = text;
   for (let i = 0; i < toGenerate.length; i++) {

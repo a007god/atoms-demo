@@ -11,6 +11,27 @@ export async function generateImage(
   prompt: string,
   opts?: { size?: string; signal?: AbortSignal },
 ): Promise<GeneratedImage> {
+  const maxRetries = 2;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await doGenerate(prompt, opts);
+      return result;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function doGenerate(
+  prompt: string,
+  opts?: { size?: string; signal?: AbortSignal },
+): Promise<GeneratedImage> {
   const apiKey = process.env.OPENAI_API_KEY;
   const baseUrl = process.env.OPENAI_BASE_URL || "https://mynewapi.n1neman.fun/v1";
 
