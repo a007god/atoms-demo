@@ -543,9 +543,17 @@ function extractHtmlFromMessage(content: string): string | null {
 
   // From the last opening, find the last ``` that closes it
   const rest = content.slice(lastOpenEnd);
-  // Find the last standalone ``` (on its own line or at end)
   const closeIdx = rest.lastIndexOf("\n```");
-  if (closeIdx === -1) return null;
+  if (closeIdx !== -1) {
+    return rest.slice(0, closeIdx);
+  }
 
-  return rest.slice(0, closeIdx);
+  // No closing ``` found — code was likely truncated by token limit.
+  // If the content looks like HTML (starts with < or has DOCTYPE), use it anyway.
+  const trimmed = rest.trim();
+  if (trimmed.startsWith("<!") || trimmed.startsWith("<html") || trimmed.startsWith("<")) {
+    return rest;
+  }
+
+  return null;
 }
