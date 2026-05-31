@@ -6,6 +6,11 @@ import remarkGfm from "remark-gfm";
 import { ChevronRight, Code2 } from "lucide-react";
 
 export function MarkdownMessage({ content, streaming = false }: { content: string; streaming?: boolean }) {
+  // During streaming, replace unclosed HTML code blocks with a placeholder
+  const processedContent = streaming
+    ? replaceStreamingCodeBlock(content)
+    : content;
+
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -109,7 +114,7 @@ export function MarkdownMessage({ content, streaming = false }: { content: strin
         ),
       }}
     >
-      {content}
+      {processedContent}
     </ReactMarkdown>
   );
 }
@@ -154,4 +159,23 @@ function CollapsibleCodeBlock({
       )}
     </div>
   );
+}
+
+/**
+ * During streaming, if there's an unclosed ```html block, replace it with
+ * a "generating code" placeholder so the user doesn't see raw HTML scrolling by.
+ */
+function replaceStreamingCodeBlock(content: string): string {
+  // Check if there's a complete HTML block — if so, leave it alone
+  if (/```(?:html|htm)\s*\n[\s\S]*?```/.test(content)) {
+    return content;
+  }
+  // Check for an unclosed HTML block
+  const unclosed = content.match(/^([\s\S]*?)(```(?:html|htm)\s*\n[\s\S]*)$/);
+  if (unclosed) {
+    const before = unclosed[1];
+    const lineCount = (unclosed[2].match(/\n/g) || []).length;
+    return `${before}\n\n> ⏳ 代码生成中（已生成 ${lineCount} 行）…\n`;
+  }
+  return content;
 }

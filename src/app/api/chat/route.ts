@@ -163,12 +163,11 @@ export async function POST(req: Request): Promise<Response> {
                   worklist.push(next);
                 }
               }
-            } else if (mode === "team" && i === worklist.length - 1) {
-              // No @mention and worklist exhausted — append default fallback
+            } else if (mode === "team" && i === worklist.length - 1 && agentId === "mike") {
+              // Only Mike gets a fallback if he forgets to @mention
               for (const fallback of DEFAULT_TEAM_FALLBACK) {
                 if (!visited.has(fallback)) {
                   worklist.push(fallback);
-                  break;
                 }
               }
             }

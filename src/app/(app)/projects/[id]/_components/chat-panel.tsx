@@ -43,8 +43,24 @@ export function ChatPanel({
   const [mentionIndex, setMentionIndex] = useState(0);
   const inputWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Stick to bottom whenever messages change.
+  const userAtBottomRef = useRef(true);
+
+  // Track whether user is scrolled to bottom
   useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const handleScroll = () => {
+      const threshold = 80;
+      userAtBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    };
+    el.addEventListener("scroll", handleScroll);
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // Only auto-scroll if user is already at the bottom
+  useEffect(() => {
+    if (!userAtBottomRef.current) return;
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
@@ -474,14 +490,9 @@ export function extractLatestHtml(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;
-    // Match complete fenced HTML blocks
+    // Only match complete fenced HTML blocks (closed with ```)
     const complete = m.content.match(/```(?:html|htm)\s*\n([\s\S]*?)```/);
     if (complete) return complete[1];
-    // Match in-progress (unclosed) HTML block at end of last assistant message
-    if (i === messages.length - 1) {
-      const partial = m.content.match(/```(?:html|htm)\s*\n([\s\S]+)$/);
-      if (partial) return partial[1];
-    }
   }
   return null;
 }
