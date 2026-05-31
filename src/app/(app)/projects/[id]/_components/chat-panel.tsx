@@ -19,6 +19,7 @@ type Props = {
   initialMessages: ChatMessage[];
   initialMode?: ChatMode;
   onHtmlDetected?: (html: string | null) => void;
+  onPreviewToggle?: (html: string) => void;
 };
 
 export function ChatPanel({
@@ -26,6 +27,7 @@ export function ChatPanel({
   initialMessages,
   initialMode = "chat",
   onHtmlDetected,
+  onPreviewToggle,
 }: Props) {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -321,6 +323,7 @@ export function ChatPanel({
                 key={m.id}
                 message={m}
                 isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
+                onShowPreview={onPreviewToggle}
               />
             ))}
             {error && (
@@ -406,9 +409,8 @@ export function ChatPanel({
   );
 }
 
-function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStreaming?: boolean }) {
+function Bubble({ message, isStreaming = false, onShowPreview }: { message: ChatMessage; isStreaming?: boolean; onShowPreview?: (html: string) => void }) {
   const isUser = message.role === "user";
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Resolve agent display info from the central definitions table.
   const agentDef =
@@ -422,7 +424,7 @@ function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStre
       ? `${agentDef.name} · ${agentDef.role}`
       : "assistant";
 
-  // Check if this message has a complete HTML block for inline preview
+  // Check if this message has a complete HTML block
   const htmlContent = !isUser && !isStreaming && message.content
     ? (() => {
         const matches = [...message.content.matchAll(/```(?:html|htm)\s*\n([\s\S]*?)```/gi)];
@@ -469,25 +471,15 @@ function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStre
             <span className="opacity-50">…</span>
           ) : null}
         </div>
-        {htmlContent && (
+        {htmlContent && onShowPreview && (
           <div className="mt-2">
             <button
               type="button"
-              onClick={() => setPreviewOpen(!previewOpen)}
+              onClick={() => onShowPreview(htmlContent)}
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              <span>{previewOpen ? "收起预览" : "查看预览"}</span>
+              <span>查看预览</span>
             </button>
-            {previewOpen && (
-              <div className="mt-2 overflow-hidden rounded-lg border border-border">
-                <iframe
-                  srcDoc={htmlContent}
-                  sandbox="allow-scripts"
-                  title="Preview"
-                  className="h-[400px] w-full bg-white"
-                />
-              </div>
-            )}
           </div>
         )}
       </div>
