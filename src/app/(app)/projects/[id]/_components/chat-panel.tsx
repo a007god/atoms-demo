@@ -408,6 +408,7 @@ export function ChatPanel({
 
 function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStreaming?: boolean }) {
   const isUser = message.role === "user";
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   // Resolve agent display info from the central definitions table.
   const agentDef =
@@ -420,6 +421,14 @@ function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStre
     : agentDef
       ? `${agentDef.name} · ${agentDef.role}`
       : "assistant";
+
+  // Check if this message has a complete HTML block for inline preview
+  const htmlContent = !isUser && !isStreaming && message.content
+    ? (() => {
+        const matches = [...message.content.matchAll(/```(?:html|htm)\s*\n([\s\S]*?)```/gi)];
+        return matches.length > 0 ? matches[matches.length - 1][1] : null;
+      })()
+    : null;
 
   return (
     <div className={isUser ? "flex justify-end" : "flex justify-start"}>
@@ -460,6 +469,27 @@ function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStre
             <span className="opacity-50">…</span>
           ) : null}
         </div>
+        {htmlContent && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(!previewOpen)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <span>{previewOpen ? "收起预览" : "查看预览"}</span>
+            </button>
+            {previewOpen && (
+              <div className="mt-2 overflow-hidden rounded-lg border border-border">
+                <iframe
+                  srcDoc={htmlContent}
+                  sandbox="allow-scripts"
+                  title="Preview"
+                  className="h-[400px] w-full bg-white"
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

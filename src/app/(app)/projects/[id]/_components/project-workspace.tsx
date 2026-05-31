@@ -18,14 +18,13 @@ export function ProjectWorkspace({
   initialMode,
 }: Props) {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const [panelVisible, setPanelVisible] = useState(true);
+  const [panelVisible, setPanelVisible] = useState(false);
   const latestHtmlRef = useRef<string | null>(null);
 
   const handleHtmlDetected = useCallback((html: string | null) => {
     if (html) {
       latestHtmlRef.current = html;
       setPreviewHtml(html);
-      setPanelVisible(true);
     }
   }, []);
 

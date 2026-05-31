@@ -197,6 +197,40 @@ export async function POST(req: Request): Promise<Response> {
           }
         }
 
+        // Mike closing summary: if team mode and last speaker wasn't Mike
+        if (mode === "team" && turnOutputs.length > 0 && turnOutputs[turnOutputs.length - 1].id !== "mike" && depth < MAX_DEPTH) {
+          const mike = AGENTS["mike"];
+          const summaryPrompt = `你是 Mike，团队的 Team Leader。团队已经完成了工作，请用 2-3 句话总结本轮成果，告诉用户交付了什么、可以在右侧预览查看。不要 @任何人。`;
+          const composedUser = composeUserMessage(message, turnOutputs);
+          const llmMessages: LLMMessage[] = [
+            { role: "system", content: summaryPrompt },
+            ...historyLLM,
+            { role: "user", content: composedUser },
+          ];
+
+          const tempId = `temp-mike-summary-${Date.now()}`;
+          write({ type: "start", tempId, agent: "mike" });
+
+          let accumulated = "";
+          for await (const chunk of provider.stream(llmMessages, {})) {
+            accumulated += chunk;
+            if (!req.signal.aborted) {
+              write({ type: "delta", tempId, text: chunk });
+            }
+          }
+
+          const saved = await prisma.message.create({
+            data: {
+              conversationId,
+              role: "assistant",
+              agent: "mike",
+              content: accumulated,
+            },
+            select: { id: true },
+          });
+          write({ type: "saved", tempId, messageId: saved.id });
+        }
+
         write({ type: "done" });
 
         // Generate a title for the project if this is the first message
@@ -321,6 +355,7 @@ function composeUserMessage(
 const IMAGE_MARKER_RE = /\[generate-image:\s*(.+?)\]/g;
 
 function hasImageMarkers(text: string): boolean {
+  IMAGE_MARKER_RE.lastIndex = 0;
   return IMAGE_MARKER_RE.test(text);
 }
 
