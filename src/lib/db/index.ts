@@ -1,4 +1,3 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "@/generated/prisma/client";
 
 const globalForPrisma = globalThis as unknown as {
@@ -7,13 +6,24 @@ const globalForPrisma = globalThis as unknown as {
 
 function createPrisma() {
   const url = process.env.DATABASE_URL ?? "file:./dev.db";
-  // Strip the SQLite "file:" prefix — better-sqlite3 wants a plain path.
-  const filePath = url.replace(/^file:/, "");
-  const adapter = new PrismaBetterSqlite3({ url: filePath });
+
+  if (url.startsWith("file:")) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { PrismaBetterSqlite3 } = require("@prisma/adapter-better-sqlite3");
+    const filePath = url.replace(/^file:/, "");
+    const adapter = new PrismaBetterSqlite3({ url: filePath });
+    return new PrismaClient({
+      adapter,
+      log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { PrismaPg } = require("@prisma/adapter-pg");
+  const adapter = new PrismaPg({ connectionString: url });
   return new PrismaClient({
     adapter,
-    log:
-      process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 }
 

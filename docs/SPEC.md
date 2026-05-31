@@ -174,6 +174,17 @@
 ### 2.14 Issue Report
 - 项目内发现 bug 一键反馈，由 Alex 自动修复
 
+### 2.15 MCP（Model Context Protocol）工具系统 ⭐ 首要未来方向
+- 为每个 Agent 分配可调用的 Tools（函数调用），扩展 Agent 能力边界
+- **轻量方案（v1）**：直接使用 LLM tool calling，在 `route.ts` 中定义工具、执行结果回填
+  - Alex：代码执行沙箱、文件系统操作
+  - David：数据查询、图表生成
+  - Iris：Web 搜索、文档检索
+  - Sarah：SEO 分析工具
+- **完整 MCP（v2）**：独立 MCP Server 进程，通过 stdio/SSE 连接，支持动态工具注册与发现
+- 工具执行结果以 Action Card 形式展示在对话流中（UI 已预留 `action-card.tsx`）
+- 安全：工具执行需沙箱隔离，用户敏感操作需确认
+
 ---
 
 ## 3. 创新延展占位（Atoms 没有的方向，暂不考虑）
