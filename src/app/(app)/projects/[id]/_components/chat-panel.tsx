@@ -326,6 +326,20 @@ export function ChatPanel({
                 onShowPreview={onPreviewToggle}
               />
             ))}
+            {streaming && (messages.length === 0 || messages[messages.length - 1].role !== "assistant" || messages[messages.length - 1].content === "") && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%]">
+                  <div className="mb-1 text-[11px] text-muted-foreground">生成中</div>
+                  <div className="rounded-lg bg-muted px-4 py-3 text-sm text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="animate-pulse">●</span>
+                      <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                      <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
             {error && (
               <div className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
                 {error}
