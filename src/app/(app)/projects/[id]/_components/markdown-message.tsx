@@ -1,13 +1,11 @@
 "use client";
 
+import { useState, isValidElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ChevronRight, Code2 } from "lucide-react";
 
-/**
- * Assistant message renderer with GitHub-flavored markdown.
- * v1: no syntax highlighting — bare `<code>` styling. Add `shiki` later if needed.
- */
-export function MarkdownMessage({ content }: { content: string }) {
+export function MarkdownMessage({ content, streaming = false }: { content: string; streaming?: boolean }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -57,14 +55,19 @@ export function MarkdownMessage({ content }: { content: string }) {
           <strong className="font-semibold">{children}</strong>
         ),
         em: ({ children }) => <em className="italic">{children}</em>,
-        pre: ({ children }) => (
-          <pre className="my-3 overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-xs font-mono leading-relaxed">
-            {children}
-          </pre>
-        ),
+        pre: ({ children }) => {
+          const lang = getChildLanguage(children);
+          const isHtml = lang === "html" || lang === "htm";
+          if (isHtml && !streaming) {
+            return <CollapsibleCodeBlock language="HTML">{children}</CollapsibleCodeBlock>;
+          }
+          return (
+            <pre className="my-3 overflow-x-auto rounded-md border border-border bg-background/60 p-3 text-xs font-mono leading-relaxed">
+              {children}
+            </pre>
+          );
+        },
         code: ({ className, children, ...props }) => {
-          // react-markdown v9+: code inside `pre` keeps its `language-*`
-          // className; standalone inline code has no className.
           const isBlock =
             /language-/.test(className ?? "") ||
             String(children).includes("\n");
@@ -108,5 +111,47 @@ export function MarkdownMessage({ content }: { content: string }) {
     >
       {content}
     </ReactMarkdown>
+  );
+}
+
+function getChildLanguage(children: ReactNode): string | null {
+  if (!isValidElement(children)) return null;
+  const className: string = (children.props as { className?: string }).className ?? "";
+  const match = className.match(/language-(\w+)/);
+  return match ? match[1] : null;
+}
+
+function CollapsibleCodeBlock({
+  children,
+  language,
+}: {
+  children: ReactNode;
+  language: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="my-3 rounded-md border border-border bg-background/60">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <ChevronRight
+          size={14}
+          className={`transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <Code2 size={14} />
+        <span>{language} 代码</span>
+        <span className="ml-auto text-[10px] opacity-60">
+          {open ? "收起" : "展开"}
+        </span>
+      </button>
+      {open && (
+        <pre className="overflow-x-auto border-t border-border p-3 text-xs font-mono leading-relaxed">
+          {children}
+        </pre>
+      )}
+    </div>
   );
 }

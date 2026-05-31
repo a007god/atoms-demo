@@ -2,7 +2,9 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getProvider, type LLMMessage } from "@/lib/llm";
-import { AGENTS, PIPELINES, type AgentId } from "@/lib/agents";
+import { AGENTS, PIPELINES, DEFAULT_TEAM_FALLBACK, type AgentId } from "@/lib/agents";
+
+const MAX_DEPTH = 8;
 
 const agentIdEnum = z.enum([
   "mike", "emma", "bob", "alex", "david", "iris", "sarah",
@@ -77,15 +79,14 @@ export async function POST(req: Request): Promise<Response> {
   });
 
   const provider = getProvider();
-  const pipeline: (AgentId | null)[] =
+  const encoder = new TextEncoder();
+
+  // Build initial worklist
+  const initialPipeline: (AgentId | null)[] =
     mentionedAgents && mentionedAgents.length > 0
       ? mentionedAgents
       : PIPELINES[mode];
-  const encoder = new TextEncoder();
 
-  // Normalize prior turns so messages strictly alternate user/assistant —
-  // Anthropic requires this and the team-mode flow naturally produces
-  // consecutive assistant rows (one per agent per turn).
   const historyLLM = normalizeHistory(history);
 
   const stream = new ReadableStream<Uint8Array>({
@@ -102,15 +103,16 @@ export async function POST(req: Request): Promise<Response> {
         messageId: userRow.id,
       });
 
-      // Outputs from prior agents in THIS user-message turn (not from DB
-      // history). Folded into the current user message at each step so the
-      // outgoing `messages` array always ends with `user` — necessary for
-      // Anthropic, harmless for OpenAI.
       const turnOutputs: { id: AgentId; content: string }[] = [];
+      const visited = new Set<AgentId | null>();
 
       try {
-        for (let i = 0; i < pipeline.length; i++) {
-          const agentId = pipeline[i];
+        // Worklist: starts with the initial pipeline, grows dynamically
+        const worklist: (AgentId | null)[] = [...initialPipeline];
+        let depth = 0;
+
+        for (let i = 0; i < worklist.length && depth < MAX_DEPTH; i++) {
+          const agentId = worklist[i];
           const agent = agentId ? AGENTS[agentId] : null;
 
           const composedUser = composeUserMessage(message, turnOutputs);
@@ -122,7 +124,7 @@ export async function POST(req: Request): Promise<Response> {
             { role: "user", content: composedUser },
           ];
 
-          const tempId = `temp-${agentId ?? "assistant"}-${i}-${Date.now()}`;
+          const tempId = `temp-${agentId ?? "assistant"}-${depth}-${Date.now()}`;
           write({ type: "start", tempId, agent: agentId });
 
           let accumulated = "";
@@ -144,7 +146,33 @@ export async function POST(req: Request): Promise<Response> {
           });
           write({ type: "saved", tempId, messageId: saved.id });
 
-          if (agentId) turnOutputs.push({ id: agentId, content: accumulated });
+          if (agentId) {
+            turnOutputs.push({ id: agentId, content: accumulated });
+            visited.add(agentId);
+          }
+          depth++;
+
+          // Dynamic routing: parse @mentions from agent output
+          if (mode === "team" || (mentionedAgents && mentionedAgents.length > 0)) {
+            const nextAgents = parseAgentMentions(accumulated, agentId);
+            if (nextAgents.length > 0) {
+              // Agent explicitly routed — replace remaining worklist
+              worklist.length = i + 1;
+              for (const next of nextAgents) {
+                if (!visited.has(next)) {
+                  worklist.push(next);
+                }
+              }
+            } else if (mode === "team" && i === worklist.length - 1) {
+              // No @mention and worklist exhausted — append default fallback
+              for (const fallback of DEFAULT_TEAM_FALLBACK) {
+                if (!visited.has(fallback)) {
+                  worklist.push(fallback);
+                  break;
+                }
+              }
+            }
+          }
         }
 
         write({ type: "done" });
@@ -169,9 +197,31 @@ export async function POST(req: Request): Promise<Response> {
 }
 
 /**
- * Collapse consecutive assistant rows (one per agent in team mode) into a
- * single assistant message so the resulting sequence strictly alternates
- * user/assistant — required by Anthropic, tolerated by OpenAI.
+ * Parse @AgentName mentions from an agent's output.
+ * Returns agent IDs in order of appearance, excluding the current agent.
+ */
+function parseAgentMentions(text: string, currentAgent: AgentId | null): AgentId[] {
+  const regex = /@\s*(Mike|Emma|Bob|Alex|David|Iris|Sarah)\b/gi;
+  const nameToId: Record<string, AgentId> = {
+    mike: "mike", emma: "emma", bob: "bob", alex: "alex",
+    david: "david", iris: "iris", sarah: "sarah",
+  };
+  const seen = new Set<AgentId>();
+  const result: AgentId[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const id = nameToId[match[1].toLowerCase()];
+    if (id && id !== currentAgent && !seen.has(id)) {
+      seen.add(id);
+      result.push(id);
+    }
+  }
+  return result;
+}
+
+/**
+ * Collapse consecutive assistant rows into a single assistant message
+ * so the sequence strictly alternates user/assistant.
  */
 function normalizeHistory(history: HistoryRow[]): LLMMessage[] {
   const out: LLMMessage[] = [];
@@ -199,8 +249,6 @@ function normalizeHistory(history: HistoryRow[]): LLMMessage[] {
         agentName ? `【${agentName}】${m.content}` : m.content,
       );
     }
-    // system rows in DB (rare) are ignored — system goes via the dedicated
-    // Anthropic `system` field which we set from agent.systemPrompt.
   }
   flush();
   return out;

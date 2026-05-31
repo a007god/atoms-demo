@@ -289,8 +289,12 @@ export function ChatPanel({
           </div>
         ) : (
           <div className="mx-auto max-w-2xl space-y-4">
-            {messages.map((m) => (
-              <Bubble key={m.id} message={m} />
+            {messages.map((m, i) => (
+              <Bubble
+                key={m.id}
+                message={m}
+                isStreaming={streaming && i === messages.length - 1 && m.role === "assistant"}
+              />
             ))}
             {error && (
               <div className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -375,7 +379,7 @@ export function ChatPanel({
   );
 }
 
-function Bubble({ message }: { message: ChatMessage }) {
+function Bubble({ message, isStreaming = false }: { message: ChatMessage; isStreaming?: boolean }) {
   const isUser = message.role === "user";
 
   // Resolve agent display info from the central definitions table.
@@ -423,7 +427,7 @@ function Bubble({ message }: { message: ChatMessage }) {
             isUser ? (
               message.content
             ) : (
-              <MarkdownMessage content={message.content} />
+              <MarkdownMessage content={message.content} streaming={isStreaming} />
             )
           ) : message.role === "assistant" ? (
             <span className="opacity-50">…</span>
