@@ -284,6 +284,15 @@ export function ChatPanel({
         );
         return;
       }
+      case "replace-content": {
+        if (typeof event.messageId !== "string" || typeof event.content !== "string") return;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === event.messageId ? { ...m, content: event.content as string } : m,
+          ),
+        );
+        return;
+      }
       case "error": {
         if (typeof event.message === "string") setError(event.message);
         return;
@@ -490,9 +499,12 @@ export function extractLatestHtml(messages: ChatMessage[]): string | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (m.role !== "assistant") continue;
-    // Only match complete fenced HTML blocks (closed with ```)
-    const complete = m.content.match(/```(?:html|htm)\s*\n([\s\S]*?)```/);
-    if (complete) return complete[1];
+    // Case-insensitive, match the LAST complete ```html block in the message
+    // (agent might output multiple code blocks; we want the final HTML one)
+    const allMatches = [...m.content.matchAll(/```(?:html|htm)\s*\n([\s\S]*?)```/gi)];
+    if (allMatches.length > 0) {
+      return allMatches[allMatches.length - 1][1];
+    }
   }
   return null;
 }

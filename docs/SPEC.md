@@ -256,9 +256,24 @@
 
 | 模块 | 选型 | 说明 |
 |---|---|---|
-| 编排实现 | 手写状态机（v1：固定串行） | 逻辑放 `lib/agents/orchestrator.ts` |
-| Agent 定义 | 静态配置 `lib/agents/registry.ts` | 角色、prompt 模板、Mock 脚本 |
+| 编排实现 | Worklist 动态路由 | 逻辑在 `app/api/chat/route.ts` |
+| Agent 定义 | 静态配置 `lib/agents/definitions.ts` | 角色、prompt 模板、accent |
+| 路由策略 | Agent 输出中 @Name → 系统自动追加到 worklist | Mike 决定路由 |
 | Race 调度 | `Promise.all` + 多通道 SSE | 每个 candidate 一个 channelId |
+
+#### 动态路由防循环机制
+
+| 防护层 | 说明 |
+|---|---|
+| `MAX_DEPTH = 8` | 单轮最多执行 8 个 agent 步骤，超出强制终止 |
+| `visited` Set | 已执行过的 agent 不会被重复调用（同一轮内） |
+| Fallback 限制 | 仅 Mike 在未 @mention 时触发 fallback（补 Emma → Alex）；其他 agent 不 @mention 即终止 |
+| 自引用过滤 | `parseAgentMentions` 排除 agent @自己 |
+
+工作流示例：
+- 简单需求：用户 → Mike（判断简单）→ `@Alex` → Alex 输出 → 终止
+- 复杂需求：用户 → Mike → `@Emma` → Emma 拆解 → `@Alex` → Alex 实现 → 终止
+- 需要调研：用户 → Mike → `@Iris @Emma` → Iris 调研 → Emma 拆解 → 终止（或 Emma `@Alex`）
 
 ### 4.8 流式传输
 

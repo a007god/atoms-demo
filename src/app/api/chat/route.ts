@@ -2,6 +2,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getProvider, type LLMMessage } from "@/lib/llm";
+import { generateImage } from "@/lib/llm/image";
 import { AGENTS, PIPELINES, DEFAULT_TEAM_FALLBACK, type AgentId } from "@/lib/agents";
 
 const MAX_DEPTH = 8;
@@ -23,6 +24,7 @@ type Event =
   | { type: "start"; tempId: string; agent: AgentId | null }
   | { type: "delta"; tempId: string; text: string }
   | { type: "saved"; tempId: string; messageId: string }
+  | { type: "replace-content"; messageId: string; content: string }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -145,6 +147,25 @@ export async function POST(req: Request): Promise<Response> {
             select: { id: true },
           });
           write({ type: "saved", tempId, messageId: saved.id });
+
+          // Post-process: generate images if Alex output contains markers
+          if (agentId === "alex" && hasImageMarkers(accumulated)) {
+            try {
+              const processed = await replaceImageMarkers(accumulated, req.signal);
+              if (processed !== accumulated) {
+                await prisma.message.update({
+                  where: { id: saved.id },
+                  data: { content: processed },
+                });
+                write({ type: "replace-content", messageId: saved.id, content: processed });
+                // Update turnOutputs with processed content
+                const idx = turnOutputs.findIndex(o => o.id === agentId);
+                if (idx >= 0) turnOutputs[idx].content = processed;
+              }
+            } catch (imgErr) {
+              console.error("Image generation failed:", imgErr);
+            }
+          }
 
           if (agentId) {
             turnOutputs.push({ id: agentId, content: accumulated });
@@ -269,4 +290,44 @@ function composeUserMessage(
   return (
     `${originalUser}\n\n---\n\n本轮已经有以下角色发言，请按你的角色基于上下文继续：\n\n${blocks}`
   );
+}
+
+const IMAGE_MARKER_RE = /\[generate-image:\s*(.+?)\]/g;
+
+function hasImageMarkers(text: string): boolean {
+  return IMAGE_MARKER_RE.test(text);
+}
+
+async function replaceImageMarkers(
+  text: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  IMAGE_MARKER_RE.lastIndex = 0;
+  const matches: { full: string; prompt: string }[] = [];
+  let m;
+  while ((m = IMAGE_MARKER_RE.exec(text)) !== null) {
+    matches.push({ full: m[0], prompt: m[1] });
+  }
+  if (matches.length === 0) return text;
+
+  // Generate images in parallel (max 3)
+  const toGenerate = matches.slice(0, 3);
+  const results = await Promise.allSettled(
+    toGenerate.map((item) =>
+      generateImage(item.prompt, { size: "1024x1024", signal }),
+    ),
+  );
+
+  let result = text;
+  for (let i = 0; i < toGenerate.length; i++) {
+    const r = results[i];
+    if (r.status === "fulfilled") {
+      const dataUrl = `data:image/png;base64,${r.value.b64}`;
+      result = result.replace(
+        toGenerate[i].full,
+        `![${toGenerate[i].prompt}](${dataUrl})`,
+      );
+    }
+  }
+  return result;
 }

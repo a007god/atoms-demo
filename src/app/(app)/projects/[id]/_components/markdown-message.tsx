@@ -62,7 +62,7 @@ export function MarkdownMessage({ content, streaming = false }: { content: strin
         em: ({ children }) => <em className="italic">{children}</em>,
         pre: ({ children }) => {
           const lang = getChildLanguage(children);
-          const isHtml = lang === "html" || lang === "htm";
+          const isHtml = lang?.toLowerCase() === "html" || lang?.toLowerCase() === "htm";
           if (isHtml && !streaming) {
             return <CollapsibleCodeBlock language="HTML">{children}</CollapsibleCodeBlock>;
           }
@@ -167,11 +167,11 @@ function CollapsibleCodeBlock({
  */
 function replaceStreamingCodeBlock(content: string): string {
   // Check if there's a complete HTML block — if so, leave it alone
-  if (/```(?:html|htm)\s*\n[\s\S]*?```/.test(content)) {
+  if (/```(?:html|htm)\s*\n[\s\S]*?```/i.test(content)) {
     return content;
   }
   // Check for an unclosed HTML block
-  const unclosed = content.match(/^([\s\S]*?)(```(?:html|htm)\s*\n[\s\S]*)$/);
+  const unclosed = content.match(/^([\s\S]*?)(```(?:html|htm)\s*\n[\s\S]*)$/i);
   if (unclosed) {
     const before = unclosed[1];
     const lineCount = (unclosed[2].match(/\n/g) || []).length;
