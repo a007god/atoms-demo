@@ -6,6 +6,7 @@ import { AGENTS, AGENT_LIST, type AgentId, type ChatMode } from "@/lib/agents";
 import { ActionsMenu } from "../../../_components/actions-menu";
 import { MarkdownMessage } from "./markdown-message";
 import { MentionPopover, getFilteredAgents } from "./mention-popover";
+import { ActionCard, parseActionContent } from "./action-card";
 
 export type ChatMessage = {
   id: string;
@@ -286,10 +287,12 @@ export function ChatPanel({
         return;
       }
       case "replace-content": {
-        if (typeof event.messageId !== "string" || typeof event.content !== "string") return;
+        if (typeof event.content !== "string") return;
+        const matchId = (event.messageId ?? event.tempId) as string | undefined;
+        if (!matchId) return;
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === event.messageId ? { ...m, content: event.content as string } : m,
+            m.id === matchId ? { ...m, content: event.content as string } : m,
           ),
         );
         return;
@@ -425,8 +428,13 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
       ? `${agentDef.name} · ${agentDef.role}`
       : "assistant";
 
+  // Check if this is an action message (e.g., image generation card)
+  const action = !isUser && message.content
+    ? parseActionContent(message.content)
+    : null;
+
   // Check if this message has a complete HTML block
-  const htmlContent = !isUser && !isStreaming && message.content
+  const htmlContent = !isUser && !isStreaming && message.content && !action
     ? extractHtmlFromMessage(message.content)
     : null;
 
@@ -451,24 +459,28 @@ function Bubble({ message, isStreaming = false, onShowPreview }: { message: Chat
           )}
           <span>{label}</span>
         </div>
-        <div
-          className={[
-            "rounded-lg px-4 py-2.5 text-sm leading-relaxed",
-            isUser
-              ? "whitespace-pre-wrap bg-primary text-primary-foreground"
-              : "bg-muted text-foreground",
-          ].join(" ")}
-        >
-          {message.content ? (
-            isUser ? (
-              message.content
-            ) : (
-              <MarkdownMessage content={message.content} streaming={isStreaming} />
-            )
-          ) : message.role === "assistant" ? (
-            <span className="opacity-50">…</span>
-          ) : null}
-        </div>
+        {action ? (
+          <ActionCard action={action} />
+        ) : (
+          <div
+            className={[
+              "rounded-lg px-4 py-2.5 text-sm leading-relaxed",
+              isUser
+                ? "whitespace-pre-wrap bg-primary text-primary-foreground"
+                : "bg-muted text-foreground",
+            ].join(" ")}
+          >
+            {message.content ? (
+              isUser ? (
+                message.content
+              ) : (
+                <MarkdownMessage content={message.content} streaming={isStreaming} />
+              )
+            ) : message.role === "assistant" ? (
+              <span className="opacity-50">…</span>
+            ) : null}
+          </div>
+        )}
         {htmlContent && onShowPreview && (
           <div className="mt-2">
             <button

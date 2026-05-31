@@ -3,7 +3,7 @@
 import { useState, isValidElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ChevronRight, Code2 } from "lucide-react";
+import { ChevronRight, FileCode2 } from "lucide-react";
 
 export function MarkdownMessage({ content, streaming = false }: { content: string; streaming?: boolean }) {
   // During streaming, replace unclosed HTML code blocks with a placeholder
@@ -146,8 +146,9 @@ function CollapsibleCodeBlock({
           size={14}
           className={`transition-transform ${open ? "rotate-90" : ""}`}
         />
-        <Code2 size={14} />
-        <span>{language} 代码</span>
+        <FileCode2 size={14} />
+        <span>写入代码</span>
+        <span className="ml-1 opacity-60">{language}</span>
         <span className="ml-auto text-[10px] opacity-60">
           {open ? "收起" : "展开"}
         </span>

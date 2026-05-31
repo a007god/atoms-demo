@@ -4,6 +4,31 @@ All notable changes per development session. Maintained alongside the code; one 
 
 ---
 
+## Session 5 — 2026-06-01 — Action cards for image generation
+
+### Action card UI
+
+- **New component** `action-card.tsx`: renders structured "action" messages as collapsible cards (similar to Atoms' step indicators).
+  - `generating` state: shows a spinner with "正在生成图片…"
+  - `done` state: collapsible card listing image descriptions (shows 3, "显示 N 个更多" toggle for the rest)
+- **Protocol**: action messages use `<<action:TYPE:STATUS>>...\n<<end>>` format stored in DB, parsed by `parseActionContent()`.
+- **Code block label**: renamed from "HTML 代码" to "写入代码 HTML" to match the Atoms action-step style.
+
+### Backend changes
+
+- Image generation now emits a `replace-content` SSE event to transition the action card from `generating` → `done` state.
+- Removed empty `turnOutputs` push during image phase (was adding a no-op entry).
+- `replace-content` handler in frontend now matches by either `messageId` or `tempId`.
+
+### Visual flow (team mode with UI task)
+
+1. Mike → requirement card (normal bubble)
+2. Alex → "生成图像" action card (spinner → collapsible image list)
+3. Alex → code output with collapsible "写入代码" block + "查看预览" button
+4. Mike → closing summary
+
+---
+
 ## Session 4 — 2026-05-31 — @mention routing + HTML preview panel
 
 Two new features that extend the chat experience: targeted agent routing via @mentions, and a live HTML preview panel (App Viewer).

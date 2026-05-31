@@ -2,7 +2,6 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getProvider, type LLMMessage } from "@/lib/llm";
-import { generateImage } from "@/lib/llm/image";
 import { AGENTS, PIPELINES, DEFAULT_TEAM_FALLBACK, type AgentId } from "@/lib/agents";
 
 const MAX_DEPTH = 8;
@@ -118,48 +117,7 @@ export async function POST(req: Request): Promise<Response> {
           const agentId = worklist[i];
           const agent = agentId ? AGENTS[agentId] : null;
 
-          // Pre-generate images for Alex if the task involves UI/pages
-          let imageContext = "";
-          if (agentId === "alex" && isUiTask(message, turnOutputs)) {
-            const imgTempId = `temp-img-gen-${Date.now()}`;
-            write({ type: "start", tempId: imgTempId, agent: "alex" });
-            write({ type: "delta", tempId: imgTempId, text: "正在生成页面素材图片…\n" });
-
-            try {
-              const imagePrompts = await planImages(provider, message, turnOutputs, historyLLM);
-              if (imagePrompts.length > 0) {
-                const images = await generateBatchImages(imagePrompts);
-                const available = images.filter((img) => img.url !== null);
-                if (available.length > 0) {
-                  imageContext = "\n\n**以下图片已生成，请直接在 HTML 中使用这些 data URL：**\n" +
-                    available.map((img, idx) => `- 图${idx + 1}（${img.desc}）: ${img.url}`).join("\n");
-                  write({ type: "delta", tempId: imgTempId, text: `已生成 ${available.length} 张图片，开始编写页面…\n` });
-                }
-              }
-            } catch (imgErr) {
-              console.error("Pre-generation images failed:", imgErr);
-            }
-
-            // Remove the image generation message (it was just a status indicator)
-            write({ type: "delta", tempId: imgTempId, text: "" });
-            // Save as a brief status message
-            const imgSaved = await prisma.message.create({
-              data: {
-                conversationId,
-                role: "assistant",
-                agent: "alex",
-                content: imageContext ? `已生成 ${imageContext.split("data:image").length - 1} 张素材图片。` : "准备开始编写页面…",
-              },
-              select: { id: true },
-            });
-            write({ type: "saved", tempId: imgTempId, messageId: imgSaved.id });
-            if (agentId) turnOutputs.push({ id: agentId, content: "" });
-            depth++;
-            // Now continue to the actual Alex code generation below
-            // but DON'T increment i — we want to run Alex again with the image context
-          }
-
-          const composedUser = composeUserMessage(message, turnOutputs) + imageContext;
+          const composedUser = composeUserMessage(message, turnOutputs);
           const llmMessages: LLMMessage[] = [
             ...(agent
               ? [{ role: "system", content: agent.systemPrompt } as LLMMessage]
@@ -383,54 +341,4 @@ function composeUserMessage(
   return (
     `${originalUser}\n\n---\n\n本轮已经有以下角色发言，请按你的角色基于上下文继续：\n\n${blocks}`
   );
-}
-
-function isUiTask(message: string, turnOutputs: { id: AgentId; content: string }[]): boolean {
-  const combined = message + turnOutputs.map(o => o.content).join(" ");
-  const keywords = ["页面", "落地页", "网页", "landing", "page", "UI", "界面", "表单", "form", "app", "工具", "计算器", "展示"];
-  return keywords.some(k => combined.toLowerCase().includes(k.toLowerCase()));
-}
-
-async function planImages(
-  provider: { stream: (msgs: LLMMessage[], opts?: object) => AsyncIterable<string> },
-  message: string,
-  turnOutputs: { id: AgentId; content: string }[],
-  historyLLM: LLMMessage[],
-): Promise<string[]> {
-  const context = turnOutputs.map(o => `${AGENTS[o.id].name}: ${o.content.slice(0, 200)}`).join("\n");
-  const planMessages: LLMMessage[] = [
-    { role: "system", content: `你是一个图片规划助手。根据用户需求和团队讨论，列出这个页面需要的图片（最多15张）。
-每行一个英文描述，用于 AI 生图。描述要具体（风格、颜色、构图、主体）。
-只输出描述列表，每行一个，不要编号、不要其他文字。如果不需要图片就输出空。` },
-    { role: "user", content: `需求：${message}\n\n团队讨论：\n${context}` },
-  ];
-
-  let result = "";
-  for await (const chunk of provider.stream(planMessages, {})) {
-    result += chunk;
-    if (result.length > 1000) break;
-  }
-
-  return result.trim().split("\n").filter(line => line.trim().length > 10).slice(0, 15);
-}
-
-async function generateBatchImages(prompts: string[]): Promise<{ desc: string; url: string | null }[]> {
-  const results: { desc: string; url: string | null }[] = [];
-
-  for (let batch = 0; batch < prompts.length; batch += 3) {
-    const chunk = prompts.slice(batch, batch + 3);
-    const batchResults = await Promise.allSettled(
-      chunk.map((prompt) => generateImage(prompt, { size: "1024x1024" })),
-    );
-    for (let j = 0; j < chunk.length; j++) {
-      const r = batchResults[j];
-      if (r.status === "fulfilled") {
-        results.push({ desc: chunk[j], url: `data:image/png;base64,${r.value.b64}` });
-      } else {
-        results.push({ desc: chunk[j], url: null });
-      }
-    }
-  }
-
-  return results;
 }
